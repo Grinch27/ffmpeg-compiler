@@ -1,0 +1,416 @@
+name: Build FFmpeg
+
+permissions:
+  contents: write
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: "FFmpeg repo URL (gitweb/shortlog URL is also accepted)"
+        required: false
+        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
+        type: string
+      ffmpeg_branch:
+        description: "Branch to build"
+        required: true
+        default: "master"
+        type: string
+      test_seconds:
+        description: "AV1 compression test duration (seconds)"
+        required: false
+        default: "8"
+        type: string
+      custom_env:
+        description: "key=value;key=value"
+        required: false
+        default: ""
+        type: string
+      runner_image:
+        description: "Runner image"
+        required: false
+        default: "ubuntu-latest"
+        type: string
+      use_devel_sources:
+        description: "Add Ubuntu devel APT sources before install"
+        required: false
+        default: false
+        type: boolean
+      create_release:
+        description: "Create or update GitHub release"
+        required: false
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      repo_url:
+        description: "FFmpeg repo URL"
+        required: false
+        type: string
+        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
+      ffmpeg_branch:
+        description: "Branch to build"
+        required: false
+        type: string
+        default: "master"
+      test_seconds:
+        description: "AV1 compression test duration (seconds)"
+        required: false
+        type: string
+        default: "8"
+      custom_env:
+        description: "key=value;key=value"
+        required: false
+        type: string
+        default: ""
+      runner_image:
+        description: "Runner image"
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      use_devel_sources:
+        description: "Add Ubuntu devel APT sources before install"
+        required: false
+        type: boolean
+        default: false
+      create_release:
+        description: "Create or update GitHub release"
+        required: false
+        type: boolean
+        default: true
+
+run-name: FFmpeg - ${{ inputs.ffmpeg_branch || 'master' }}
+
+env:
+  ffmpeg_branch: ${{ inputs.ffmpeg_branch || 'master' }}
+  custom_env: ${{ inputs.custom_env || '' }}
+
+jobs:
+  build:
+    name: Build FFmpeg - ${{ inputs.ffmpeg_branch || 'master' }}
+    runs-on: ${{ inputs.runner_image || 'ubuntu-latest' }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      path_build: /builder
+      path_source: /builder/ffmpeg
+      path_install: /builder/install
+      path_output: /builder/output
+      path_logs: /builder/logs
+      path_test: /builder/av1-test
+      path_release_md: /builder/output/release.md
+    steps:
+      - name: Set variables
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_repo="${{ inputs.repo_url || 'https://git.ffmpeg.org/gitweb/ffmpeg.git' }}"
+          raw_repo="${raw_repo%%/shortlog/refs/heads/*}"
+          raw_repo="${raw_repo%%/log/refs/heads/*}"
+          raw_repo="${raw_repo%%/shortlog/*}"
+          raw_repo="${raw_repo/gitweb\//}"
+          raw_repo="${raw_repo%/}"
+          [[ "${raw_repo}" == *.git ]] || raw_repo="${raw_repo}.git"
+
+          fallback_repo="https://github.com/FFmpeg/FFmpeg.git"
+          branch="${{ env.ffmpeg_branch }}"
+          [[ "${branch}" == "masterd" ]] && branch="master"
+
+          env_vars=(
+            "raw_repo"
+            "fallback_repo"
+            "branch"
+          )
+          for var in "${env_vars[@]}"; do
+            echo "${var}=${!var}" | tee -a "${GITHUB_ENV}"
+          done
+
+          echo "raw_repo=${raw_repo}" >> "${GITHUB_OUTPUT}"
+          echo "fallback_repo=${fallback_repo}" >> "${GITHUB_OUTPUT}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+          echo "status=success" >> "${GITHUB_OUTPUT}"
+
+      - name: Load custom environment
+        if: ${{ env.custom_env != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ env.custom_env }}" | tr ';' '\n' | tee -a "${GITHUB_ENV}"
+
+      - name: Configure APT sources (devel)
+        if: ${{ inputs.use_devel_sources || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -E tee /etc/apt/sources.list.d/ubuntu-devel.sources > /dev/null <<'EOF'
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu/
+          Suites: devel devel-updates
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+
+          sudo -E tee /etc/apt/preferences.d/devel-priority > /dev/null <<'EOF'
+          Package: *
+          Pin: release n=devel
+          Pin-Priority: 50
+          EOF
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -E apt-get -yqq update
+          packages=(
+            autoconf
+            automake
+            build-essential
+            ca-certificates
+            cmake
+            curl
+            git
+            libaom-dev
+            libdav1d-dev
+            libmp3lame-dev
+            libopus-dev
+            libsvtav1-dev
+            libvorbis-dev
+            libvpx-dev
+            libx264-dev
+            libx265-dev
+            meson
+            nasm
+            ninja-build
+            pkg-config
+            python3
+            texinfo
+            yasm
+            zlib1g-dev
+          )
+          sudo -E apt-get -yqq install "${packages[@]}"
+          sudo -E apt-get -yqq autoremove --purge
+          sudo -E apt-get -yqq clean
+
+      - name: Clone FFmpeg source
+        id: clone
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${path_build}" "${path_output}" "${path_logs}" "${path_test}"
+
+          clone_target_repo() {
+            local repo="$1"
+            local branch_name="$2"
+            if ! git ls-remote --heads "${repo}" "${branch_name}" >/dev/null 2>&1; then
+              return 1
+            fi
+            git clone "${repo}" "${path_source}" --single-branch --branch "${branch_name}"
+          }
+
+          if ! clone_target_repo "${raw_repo}" "${branch}"; then
+            echo "::warning::Failed to access ${raw_repo} branch ${branch}; fallback to ${fallback_repo}"
+            rm -rf "${path_source}"
+            clone_target_repo "${fallback_repo}" "${branch}"
+            echo "repo_target=${fallback_repo}" >> "${GITHUB_ENV}"
+          else
+            echo "repo_target=${raw_repo}" >> "${GITHUB_ENV}"
+          fi
+
+          echo "status=success" >> "${GITHUB_OUTPUT}"
+
+      - name: Capture source revision
+        id: git-rev
+        working-directory: ${{ env.path_source }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git_desc="$(git describe --always --dirty --tags 2>/dev/null || git rev-parse --short=12 HEAD)"
+          git_hash="$(git rev-parse HEAD)"
+          echo "git_desc=${git_desc}" | tee -a "${GITHUB_OUTPUT}"
+          echo "git_hash=${git_hash}" | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Configure and build FFmpeg
+        working-directory: ${{ env.path_source }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${path_install}" "${path_logs}"
+
+          declare -a configure_flags=(
+            "--prefix=${path_install}"
+            "--disable-debug"
+            "--disable-doc"
+            "--disable-ffplay"
+            "--enable-gpl"
+            "--enable-version3"
+            "--enable-shared"
+            "--disable-static"
+          )
+
+          add_flag_if_pkg_exists() {
+            local pkg="$1"
+            local flag="$2"
+            if pkg-config --exists "${pkg}"; then
+              configure_flags+=("${flag}")
+            fi
+          }
+
+          add_flag_if_pkg_exists "aom" "--enable-libaom"
+          add_flag_if_pkg_exists "dav1d" "--enable-libdav1d"
+          add_flag_if_pkg_exists "SvtAv1Enc" "--enable-libsvtav1"
+          add_flag_if_pkg_exists "vpx" "--enable-libvpx"
+          add_flag_if_pkg_exists "x264" "--enable-libx264"
+          add_flag_if_pkg_exists "x265" "--enable-libx265"
+          add_flag_if_pkg_exists "libmp3lame" "--enable-libmp3lame"
+          add_flag_if_pkg_exists "opus" "--enable-libopus"
+          add_flag_if_pkg_exists "vorbis" "--enable-libvorbis"
+
+          printf '%s\n' "${configure_flags[@]}" | tee "${path_logs}/configure_flags.txt"
+
+          ./configure "${configure_flags[@]}" | tee "${path_logs}/configure.log"
+          make -j"$(nproc)" | tee "${path_logs}/make.log"
+          make install | tee "${path_logs}/install.log"
+
+          export LD_LIBRARY_PATH="${path_install}/lib:${LD_LIBRARY_PATH:-}"
+          "${path_install}/bin/ffmpeg" -hide_banner -version | tee "${path_logs}/ffmpeg-version.txt"
+          "${path_install}/bin/ffmpeg" -hide_banner -encoders | grep -E "av1|264|265" | tee "${path_logs}/encoders.txt"
+
+      - name: Run AV1 compression test
+        id: av1-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="${path_install}/lib:${LD_LIBRARY_PATH:-}"
+          FFMPEG_BIN="${path_install}/bin/ffmpeg"
+          FFPROBE_BIN="${path_install}/bin/ffprobe"
+          TEST_SECONDS="${{ inputs.test_seconds || '8' }}"
+
+          INPUT_FILE="${path_test}/input_h264.mp4"
+          OUTPUT_FILE="${path_test}/output_av1.mkv"
+          METRIC_FILE="${path_test}/av1_metrics.txt"
+
+          "${FFMPEG_BIN}" -hide_banner -y \
+            -f lavfi -i "testsrc2=size=1280x720:rate=30" \
+            -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
+            -t "${TEST_SECONDS}" \
+            -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
+            -c:a aac -b:a 128k \
+            "${INPUT_FILE}"
+
+          ENCODER=""
+          declare -a ENC_OPTS=()
+
+          if "${FFMPEG_BIN}" -hide_banner -encoders | grep -q "libsvtav1"; then
+            ENCODER="libsvtav1"
+            ENC_OPTS=(-preset 8 -crf 35)
+          elif "${FFMPEG_BIN}" -hide_banner -encoders | grep -q "libaom-av1"; then
+            ENCODER="libaom-av1"
+            ENC_OPTS=(-cpu-used 6 -crf 34 -b:v 0 -row-mt 1)
+          elif "${FFMPEG_BIN}" -hide_banner -encoders | grep -q "librav1e"; then
+            ENCODER="librav1e"
+            ENC_OPTS=(-speed 8 -qp 100)
+          else
+            echo "No AV1 encoder available in built FFmpeg" >&2
+            exit 1
+          fi
+
+          "${FFMPEG_BIN}" -hide_banner -y \
+            -i "${INPUT_FILE}" \
+            -c:v "${ENCODER}" "${ENC_OPTS[@]}" \
+            -pix_fmt yuv420p \
+            -c:a copy \
+            "${OUTPUT_FILE}"
+
+          "${FFPROBE_BIN}" -v error \
+            -show_entries stream=index,codec_name,codec_type,width,height,avg_frame_rate \
+            -of default=nokey=0 "${OUTPUT_FILE}" | tee "${METRIC_FILE}"
+
+          "${FFMPEG_BIN}" -hide_banner -v error -i "${OUTPUT_FILE}" -f null - 2>&1 | tee -a "${METRIC_FILE}"
+
+          input_size="$(stat -c '%s' "${INPUT_FILE}")"
+          output_size="$(stat -c '%s' "${OUTPUT_FILE}")"
+          ratio_percent="$(awk -v a="${input_size}" -v b="${output_size}" 'BEGIN {printf "%.2f", (b/a)*100}')"
+          saved_percent="$(awk -v x="${ratio_percent}" 'BEGIN {printf "%.2f", 100-x}')"
+
+          {
+            echo "encoder=${ENCODER}"
+            echo "input_size=${input_size}"
+            echo "output_size=${output_size}"
+            echo "ratio_percent=${ratio_percent}"
+            echo "saved_percent=${saved_percent}"
+          } | tee -a "${GITHUB_OUTPUT}"
+
+          {
+            echo "encoder=${ENCODER}"
+            echo "input_size_bytes=${input_size}"
+            echo "output_size_bytes=${output_size}"
+            echo "output_vs_input_percent=${ratio_percent}"
+            echo "saved_percent=${saved_percent}"
+          } | tee -a "${METRIC_FILE}"
+
+      - name: Package outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${path_output}"
+          tar_name="ffmpeg-${branch}-${{ steps.git-rev.outputs.git_desc }}.tar.gz"
+          tar -C "${path_install}" -czf "${path_output}/${tar_name}" .
+          cp -f "${path_test}/av1_metrics.txt" "${path_output}/av1_metrics.txt"
+          sha256sum "${path_output}/${tar_name}" | tee "${path_output}/sha256sum.txt"
+
+      - name: Generate release note
+        id: release-md
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "${path_release_md}"
+
+          {
+            echo "# FFmpeg Build"
+            echo
+            echo "- Timestamp: $(date +'%Y-%m-%d %H:%M:%S %z')"
+            echo "- Repository: ${repo_target}"
+            echo "- Branch: ${branch}"
+            echo "- Commit: ${{ steps.git-rev.outputs.git_hash }}"
+            echo "- AV1 Encoder: ${{ steps.av1-test.outputs.encoder }}"
+            echo "- Input Size: ${{ steps.av1-test.outputs.input_size }} bytes"
+            echo "- Output Size: ${{ steps.av1-test.outputs.output_size }} bytes"
+            echo "- Output/Input: ${{ steps.av1-test.outputs.ratio_percent }}%"
+            echo "- Compression Saved: ${{ steps.av1-test.outputs.saved_percent }}%"
+          } | tee "${path_release_md}"
+
+          stamp="$(date +'%y%mw%V')"
+          safe_desc="$(echo '${{ steps.git-rev.outputs.git_desc }}' | tr '/' '-')"
+          release_tag="ffmpeg-${branch}-${safe_desc}"
+          release_name="${stamp}_${release_tag}"
+
+          {
+            echo "timestamp=${stamp}"
+            echo "release_tag=${release_tag}"
+            echo "release_name=${release_name}"
+          } | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ steps.vars.outputs.branch }}-${{ steps.git-rev.outputs.git_desc }}
+          path: |
+            ${{ env.path_output }}/*
+            ${{ env.path_logs }}/*
+            ${{ env.path_test }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload release
+        if: ${{ inputs.create_release || false }}
+        uses: ncipollo/release-action@v1
+        with:
+          name: ${{ steps.release-md.outputs.release_name }}
+          tag: ${{ steps.release-md.outputs.release_tag }}
+          bodyFile: ${{ env.path_release_md }}
+          artifacts: "${{ env.path_output }}/*"
+          allowUpdates: true
+          removeArtifacts: false
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,32 @@
+name: Call Build
+
+run-name: Build Matrix for FFmpeg
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  repository_dispatch:
+  workflow_dispatch:
+
+jobs:
+  ffmpeg:
+    name: ${{ matrix.workflows_inputs.ffmpeg_branch }}
+    uses: ./.github/workflows/build-ffmpeg_indocker.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_image: ["ubuntu-latest"]
+        container_image: ["ubuntu:24.04"]
+        workflows_inputs:
+          - ffmpeg_branch: "master"
+            repo_url: "https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd"
+            test_seconds: "8"
+    with:
+      repo_url: ${{ matrix.workflows_inputs.repo_url }}
+      ffmpeg_branch: ${{ matrix.workflows_inputs.ffmpeg_branch }}
+      test_seconds: ${{ matrix.workflows_inputs.test_seconds }}
+      runner_image: ${{ matrix.runner_image }}
+      container_image: ${{ matrix.container_image }}
+      custom_env: ""
+      create_release: false
+    secrets: inherit

@@ -1,0 +1,104 @@
+name: (Docker) Build FFmpeg (Dev)
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: "FFmpeg repo URL (gitweb/shortlog URL is also accepted)"
+        required: false
+        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd"
+        type: string
+      ffmpeg_branch:
+        description: "Branch to build"
+        required: true
+        default: "master"
+        type: string
+      test_seconds:
+        description: "AV1 compression test duration (seconds)"
+        required: false
+        default: "8"
+        type: string
+      custom_env:
+        description: "key=value;key=value"
+        required: false
+        default: ""
+        type: string
+      runner_image:
+        description: "Runner image"
+        required: false
+        default: "ubuntu-latest"
+        type: string
+      container_image:
+        description: "Container image"
+        required: false
+        default: "ubuntu:devel"
+        type: string
+      use_devel_sources:
+        description: "Add Ubuntu devel APT sources before install"
+        required: false
+        default: false
+        type: boolean
+      create_release:
+        description: "Create or update GitHub release"
+        required: false
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      repo_url:
+        description: "FFmpeg repo URL"
+        required: false
+        type: string
+        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd"
+      ffmpeg_branch:
+        description: "Branch to build"
+        required: false
+        type: string
+        default: "master"
+      test_seconds:
+        description: "AV1 compression test duration (seconds)"
+        required: false
+        type: string
+        default: "8"
+      custom_env:
+        description: "key=value;key=value"
+        required: false
+        type: string
+        default: ""
+      runner_image:
+        description: "Runner image"
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      container_image:
+        description: "Container image"
+        required: false
+        type: string
+        default: "ubuntu:devel"
+      use_devel_sources:
+        description: "Add Ubuntu devel APT sources before install"
+        required: false
+        type: boolean
+        default: false
+      create_release:
+        description: "Create or update GitHub release"
+        required: false
+        type: boolean
+        default: true
+
+run-name: FFmpeg Docker Dev - ${{ inputs.ffmpeg_branch || 'master' }}
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-ffmpeg_indocker.yml
+    with:
+      repo_url: ${{ inputs.repo_url }}
+      ffmpeg_branch: ${{ inputs.ffmpeg_branch }}
+      test_seconds: ${{ inputs.test_seconds }}
+      custom_env: ${{ inputs.custom_env }}
+      runner_image: ${{ inputs.runner_image }}
+      container_image: ${{ inputs.container_image }}
+      use_devel_sources: ${{ inputs.use_devel_sources }}
+      create_release: ${{ inputs.create_release }}
+    secrets: inherit
