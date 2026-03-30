@@ -187,7 +187,8 @@ jobs:
 
           available_optional_packages=()
           for pkg in "${optional_codec_packages[@]}"; do
-            if apt-cache show "${pkg}" >/dev/null 2>&1; then
+            candidate="$(apt-cache policy "${pkg}" | awk '/Candidate:/ {print $2}')"
+            if [[ -n "${candidate}" && "${candidate}" != "(none)" ]]; then
               available_optional_packages+=("${pkg}")
             else
               echo "::warning::Optional package ${pkg} is not available in current APT sources and will be skipped"
