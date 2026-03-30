@@ -24,11 +24,6 @@ on:
         required: false
         default: ""
         type: string
-      use_devel_sources:
-        description: "Add Ubuntu devel APT sources before install"
-        required: false
-        default: true
-        type: boolean
       create_release:
         description: "Create or update GitHub release"
         required: false
@@ -56,11 +51,6 @@ on:
         required: false
         type: string
         default: ""
-      use_devel_sources:
-        description: "Add Ubuntu devel APT sources before install"
-        required: false
-        type: boolean
-        default: true
       create_release:
         description: "Create or update GitHub release"
         required: false
@@ -77,6 +67,5 @@ jobs:
       ffmpeg_branch: ${{ inputs.ffmpeg_branch }}
       test_seconds: ${{ inputs.test_seconds }}
       custom_env: ${{ inputs.custom_env }}
-      use_devel_sources: ${{ inputs.use_devel_sources }}
       create_release: ${{ inputs.create_release }}
     secrets: inherit
