@@ -35,7 +35,7 @@ jobs:
       test_seconds: "8"
       custom_env: ""
       runner_image: ubuntu-latest
-      container_image: ubuntu:24.04
+      container_image: ubuntu:devel
       use_devel_sources: false
       create_release: false
     secrets: inherit

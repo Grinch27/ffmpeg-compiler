@@ -35,7 +35,7 @@ on:
       container_image:
         description: "Container image"
         required: false
-        default: "ubuntu:24.04"
+        default: "ubuntu:devel"
         type: string
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
@@ -78,7 +78,7 @@ on:
         description: "Container image"
         required: false
         type: string
-        default: "ubuntu:24.04"
+        default: "ubuntu:devel"
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -101,7 +101,7 @@ jobs:
     name: Build FFmpeg (Docker) - ${{ inputs.ffmpeg_branch || 'master' }}
     runs-on: ${{ inputs.runner_image || 'ubuntu-latest' }}
     container:
-      image: ${{ inputs.container_image || 'ubuntu:24.04' }}
+      image: ${{ inputs.container_image || 'ubuntu:devel' }}
     env:
       DEBIAN_FRONTEND: noninteractive
       path_build: ${{ github.workspace }}/builder

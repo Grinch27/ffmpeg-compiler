@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         runner_image: ["ubuntu-latest"]
-        container_image: ["ubuntu:24.04"]
+        container_image: ["ubuntu:devel"]
         workflows_inputs:
           - ffmpeg_branch: "master"
             repo_url: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
