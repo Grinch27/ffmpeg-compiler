@@ -15,13 +15,15 @@ GitHub Actions workflows for building FFmpeg from upstream `master` and running 
 - `.github/workflows/build-ffmpeg.yml`
   - Main runner-based build workflow.
 - `.github/workflows/build-ffmpeg_dev.yml`
-  - Dev wrapper around `build-ffmpeg.yml` (defaults to `ubuntu-24.04`).
+  - Dev wrapper around `build-ffmpeg.yml` (defaults to `ubuntu-latest`).
 - `.github/workflows/build-ffmpeg_indocker.yml`
   - Container-based build workflow.
 - `.github/workflows/build-ffmpeg_indocker_dev.yml`
   - Dev wrapper around `build-ffmpeg_indocker.yml` (defaults to `ubuntu:devel`).
 - `.github/workflows/call-build.yml`
   - Scheduled/matrix caller workflow.
+- `.github/workflows/ci.yml`
+  - Push/PR auto CI workflow for build + AV1 test + failure summary.
 
 ## Important compatibility behavior
 
@@ -50,6 +52,28 @@ Key inputs:
 - `runner_image`: GitHub Actions runner image.
 - `container_image`: container image for docker workflow.
 - `create_release`: whether to create/update release.
+
+Note: `create_release` defaults to `false` to keep workflow permissions minimal by default.
+
+## Recommended repository Actions settings
+
+Use least privilege in repository settings:
+
+1. `Settings` -> `Actions` -> `General`.
+2. Set `Workflow permissions` to `Read repository contents permission`.
+3. Keep `Allow GitHub Actions to create and approve pull requests` disabled unless required.
+
+## VS Code + Copilot failure-fix loop
+
+The `CI Build and Test` workflow runs automatically on push and pull requests.
+
+On failure it will:
+
+- Generate a compact failure summary (failed jobs and failed steps).
+- Publish the summary to run summary and as artifact `ci-failure-summary-<run_id>`.
+- Auto-comment the summary on pull requests (visible in VS Code GitHub Pull Requests).
+
+Then you can ask Copilot in VS Code to fix based on that summary and push again to retrigger CI.
 
 ## Output
 

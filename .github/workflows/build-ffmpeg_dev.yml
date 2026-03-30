@@ -27,7 +27,7 @@ on:
       runner_image:
         description: "Runner image"
         required: false
-        default: "ubuntu-24.04"
+        default: "ubuntu-latest"
         type: string
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
@@ -37,7 +37,7 @@ on:
       create_release:
         description: "Create or update GitHub release"
         required: false
-        default: true
+        default: false
         type: boolean
   workflow_call:
     inputs:
@@ -65,7 +65,7 @@ on:
         description: "Runner image"
         required: false
         type: string
-        default: "ubuntu-24.04"
+        default: "ubuntu-latest"
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -75,7 +75,7 @@ on:
         description: "Create or update GitHub release"
         required: false
         type: boolean
-        default: true
+        default: false
 
 run-name: FFmpeg Dev - ${{ inputs.ffmpeg_branch || 'master' }}
 

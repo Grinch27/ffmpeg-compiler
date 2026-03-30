@@ -1,5 +1,8 @@
 name: Build FFmpeg
 
+permissions:
+  contents: read
+
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -37,7 +40,7 @@ on:
       create_release:
         description: "Create or update GitHub release"
         required: false
-        default: true
+        default: false
         type: boolean
   workflow_call:
     inputs:
@@ -75,7 +78,7 @@ on:
         description: "Create or update GitHub release"
         required: false
         type: boolean
-        default: true
+        default: false
 
 run-name: FFmpeg - ${{ inputs.ffmpeg_branch || 'master' }}
 
@@ -89,13 +92,13 @@ jobs:
     runs-on: ${{ inputs.runner_image || 'ubuntu-latest' }}
     env:
       DEBIAN_FRONTEND: noninteractive
-      path_build: /builder
-      path_source: /builder/ffmpeg
-      path_install: /builder/install
-      path_output: /builder/output
-      path_logs: /builder/logs
-      path_test: /builder/av1-test
-      path_release_md: /builder/output/release.md
+      path_build: ${{ github.workspace }}/builder
+      path_source: ${{ github.workspace }}/builder/ffmpeg
+      path_install: ${{ github.workspace }}/builder/install
+      path_output: ${{ github.workspace }}/builder/output
+      path_logs: ${{ github.workspace }}/builder/logs
+      path_test: ${{ github.workspace }}/builder/av1-test
+      path_release_md: ${{ github.workspace }}/builder/output/release.md
     steps:
       - name: Set variables
         id: vars
@@ -388,7 +391,45 @@ jobs:
             echo "release_name=${release_name}"
           } | tee -a "${GITHUB_OUTPUT}"
 
+      - name: Capture failure summary
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${path_output}" "${path_logs}" "${path_test}"
+          summary_file="${path_output}/failure-summary.md"
+
+          {
+            echo "## Build Failure Summary"
+            echo
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Branch Input: ${branch:-${{ env.ffmpeg_branch }}}"
+            echo "- Repository Input: ${raw_repo:-unknown}"
+            echo
+            echo "### Last configure.log lines"
+            if [[ -f "${path_logs}/configure.log" ]]; then
+              tail -n 80 "${path_logs}/configure.log"
+            else
+              echo "configure.log not found"
+            fi
+            echo
+            echo "### Last make.log lines"
+            if [[ -f "${path_logs}/make.log" ]]; then
+              tail -n 80 "${path_logs}/make.log"
+            else
+              echo "make.log not found"
+            fi
+            echo
+            echo "### Last av1_metrics.txt lines"
+            if [[ -f "${path_test}/av1_metrics.txt" ]]; then
+              tail -n 80 "${path_test}/av1_metrics.txt"
+            else
+              echo "av1_metrics.txt not found"
+            fi
+          } | tee "${summary_file}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
       - name: Upload artifacts
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-${{ steps.vars.outputs.branch }}-${{ steps.git-rev.outputs.git_desc }}
@@ -396,7 +437,7 @@ jobs:
             ${{ env.path_output }}/*
             ${{ env.path_logs }}/*
             ${{ env.path_test }}/*
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Upload release
