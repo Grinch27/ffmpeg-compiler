@@ -11,7 +11,7 @@ on:
 jobs:
   ffmpeg:
     name: ${{ matrix.workflows_inputs.ffmpeg_branch }}
-    uses: ./.github/workflows/build-ffmpeg_indocker.yml
+    uses: ./.github/workflows/build-ffmpeg_indocker_dev.yml
     strategy:
       fail-fast: false
       matrix:

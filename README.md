@@ -12,14 +12,10 @@ GitHub Actions workflows for building FFmpeg from upstream `master` and running 
 
 ## Workflows
 
-- `.github/workflows/build-ffmpeg.yml`
-  - Main runner-based build workflow.
 - `.github/workflows/build-ffmpeg_dev.yml`
-  - Dev wrapper around `build-ffmpeg.yml` (defaults to `ubuntu-latest`).
-- `.github/workflows/build-ffmpeg_indocker.yml`
-  - Container-based build workflow.
+  - Main runner-based build workflow (uses `ubuntu-latest`).
 - `.github/workflows/build-ffmpeg_indocker_dev.yml`
-  - Dev wrapper around `build-ffmpeg_indocker.yml` (defaults to `ubuntu:devel`).
+  - Main container-based build workflow (runner `ubuntu-latest`, container `ubuntu:devel`).
 - `.github/workflows/call-build.yml`
   - Scheduled/matrix caller workflow.
 - `.github/workflows/ci.yml`
@@ -39,9 +35,7 @@ If `masterd` is provided by mistake as the branch, it is auto-corrected to `mast
 
 From GitHub Actions, run one of:
 
-- `Build FFmpeg`
 - `Build FFmpeg (Dev)`
-- `(Docker) Build FFmpeg`
 - `(Docker) Build FFmpeg (Dev)`
 
 Key inputs:
