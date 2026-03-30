@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  build_test:
-    name: Build and AV1 Test
-    uses: ./.github/workflows/build-ffmpeg.yml
+  test_build_ffmpeg_dev:
+    name: Test build-ffmpeg_dev.yml
+    uses: ./.github/workflows/build-ffmpeg_dev.yml
     permissions:
       contents: read
     with:
@@ -24,11 +24,28 @@ jobs:
       create_release: false
     secrets: inherit
 
+  test_build_ffmpeg_indocker_dev:
+    name: Test build-ffmpeg_indocker_dev.yml
+    uses: ./.github/workflows/build-ffmpeg_indocker_dev.yml
+    permissions:
+      contents: read
+    with:
+      repo_url: https://git.ffmpeg.org/gitweb/ffmpeg.git
+      ffmpeg_branch: master
+      test_seconds: "8"
+      custom_env: ""
+      runner_image: ubuntu-latest
+      container_image: ubuntu:24.04
+      use_devel_sources: false
+      create_release: false
+    secrets: inherit
+
   failure_summary:
     name: Failure Summary
-    if: ${{ failure() }}
+    if: ${{ always() && (needs.test_build_ffmpeg_dev.result == 'failure' || needs.test_build_ffmpeg_indocker_dev.result == 'failure') }}
     needs:
-      - build_test
+      - test_build_ffmpeg_dev
+      - test_build_ffmpeg_indocker_dev
     runs-on: ubuntu-latest
     permissions:
       actions: read

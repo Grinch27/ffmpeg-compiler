@@ -23,7 +23,7 @@ GitHub Actions workflows for building FFmpeg from upstream `master` and running 
 - `.github/workflows/call-build.yml`
   - Scheduled/matrix caller workflow.
 - `.github/workflows/ci.yml`
-  - Push/PR auto CI workflow for build + AV1 test + failure summary.
+  - Push/PR auto CI workflow that tests both `build-ffmpeg_dev.yml` and `build-ffmpeg_indocker_dev.yml`, then posts failure summary.
 
 ## Important compatibility behavior
 
@@ -66,6 +66,11 @@ Use least privilege in repository settings:
 ## VS Code + Copilot failure-fix loop
 
 The `CI Build and Test` workflow runs automatically on push and pull requests.
+
+It runs these two workflows every time:
+
+- `build-ffmpeg_dev.yml`
+- `build-ffmpeg_indocker_dev.yml`
 
 On failure it will:
 
