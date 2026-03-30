@@ -7,7 +7,7 @@ on:
       repo_url:
         description: "FFmpeg repo URL (gitweb/shortlog URL is also accepted)"
         required: false
-        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd"
+        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
         type: string
       ffmpeg_branch:
         description: "Branch to build"
@@ -45,7 +45,7 @@ on:
         description: "FFmpeg repo URL"
         required: false
         type: string
-        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd"
+        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
       ffmpeg_branch:
         description: "Branch to build"
         required: false

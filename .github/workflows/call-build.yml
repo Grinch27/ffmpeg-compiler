@@ -19,7 +19,7 @@ jobs:
         container_image: ["ubuntu:24.04"]
         workflows_inputs:
           - ffmpeg_branch: "master"
-            repo_url: "https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd"
+            repo_url: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
             test_seconds: "8"
     with:
       repo_url: ${{ matrix.workflows_inputs.repo_url }}
