@@ -15,8 +15,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner_image: ["ubuntu-latest"]
-        container_image: ["ubuntu:devel"]
         workflows_inputs:
           - ffmpeg_branch: "master"
             repo_url: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
@@ -25,8 +23,6 @@ jobs:
       repo_url: ${{ matrix.workflows_inputs.repo_url }}
       ffmpeg_branch: ${{ matrix.workflows_inputs.ffmpeg_branch }}
       test_seconds: ${{ matrix.workflows_inputs.test_seconds }}
-      runner_image: ${{ matrix.runner_image }}
-      container_image: ${{ matrix.container_image }}
       custom_env: ""
       create_release: false
     secrets: inherit

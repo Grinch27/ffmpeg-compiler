@@ -24,11 +24,6 @@ on:
         required: false
         default: ""
         type: string
-      runner_image:
-        description: "Runner image"
-        required: false
-        default: "ubuntu-latest"
-        type: string
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -61,11 +56,6 @@ on:
         required: false
         type: string
         default: ""
-      runner_image:
-        description: "Runner image"
-        required: false
-        type: string
-        default: "ubuntu-latest"
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -87,7 +77,6 @@ jobs:
       ffmpeg_branch: ${{ inputs.ffmpeg_branch }}
       test_seconds: ${{ inputs.test_seconds }}
       custom_env: ${{ inputs.custom_env }}
-      runner_image: ${{ inputs.runner_image }}
       use_devel_sources: ${{ inputs.use_devel_sources }}
       create_release: ${{ inputs.create_release }}
     secrets: inherit

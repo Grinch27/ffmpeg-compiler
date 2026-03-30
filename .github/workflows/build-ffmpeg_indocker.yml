@@ -27,16 +27,6 @@ on:
         required: false
         default: ""
         type: string
-      runner_image:
-        description: "Runner image"
-        required: false
-        default: "ubuntu-latest"
-        type: string
-      container_image:
-        description: "Container image"
-        required: false
-        default: "ubuntu:devel"
-        type: string
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -69,16 +59,6 @@ on:
         required: false
         type: string
         default: ""
-      runner_image:
-        description: "Runner image"
-        required: false
-        type: string
-        default: "ubuntu-latest"
-      container_image:
-        description: "Container image"
-        required: false
-        type: string
-        default: "ubuntu:devel"
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -99,9 +79,9 @@ env:
 jobs:
   build:
     name: Build FFmpeg (Docker) - ${{ inputs.ffmpeg_branch || 'master' }}
-    runs-on: ${{ inputs.runner_image || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     container:
-      image: ${{ inputs.container_image || 'ubuntu:devel' }}
+      image: ubuntu:devel
     env:
       DEBIAN_FRONTEND: noninteractive
       path_build: ${{ github.workspace }}/builder

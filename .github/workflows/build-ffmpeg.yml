@@ -27,11 +27,6 @@ on:
         required: false
         default: ""
         type: string
-      runner_image:
-        description: "Runner image"
-        required: false
-        default: "ubuntu-latest"
-        type: string
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -64,11 +59,6 @@ on:
         required: false
         type: string
         default: ""
-      runner_image:
-        description: "Runner image"
-        required: false
-        type: string
-        default: "ubuntu-latest"
       use_devel_sources:
         description: "Add Ubuntu devel APT sources before install"
         required: false
@@ -89,7 +79,7 @@ env:
 jobs:
   build:
     name: Build FFmpeg - ${{ inputs.ffmpeg_branch || 'master' }}
-    runs-on: ${{ inputs.runner_image || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     env:
       DEBIAN_FRONTEND: noninteractive
       path_build: ${{ github.workspace }}/builder

@@ -49,9 +49,12 @@ Key inputs:
 - `repo_url`: upstream source URL.
 - `ffmpeg_branch`: branch name, default `master`.
 - `test_seconds`: AV1 test duration, default `8`.
-- `runner_image`: GitHub Actions runner image.
-- `container_image`: container image for docker workflow.
 - `create_release`: whether to create/update release.
+
+Fixed runtime images in workflow definitions:
+
+- Runner image: `ubuntu-latest`
+- Docker container image: `ubuntu:devel`
 
 Note: `create_release` defaults to `false` to keep workflow permissions minimal by default.
 

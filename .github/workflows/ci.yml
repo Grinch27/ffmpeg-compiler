@@ -19,7 +19,6 @@ jobs:
       ffmpeg_branch: master
       test_seconds: "8"
       custom_env: ""
-      runner_image: ubuntu-latest
       use_devel_sources: false
       create_release: false
     secrets: inherit
@@ -34,8 +33,6 @@ jobs:
       ffmpeg_branch: master
       test_seconds: "8"
       custom_env: ""
-      runner_image: ubuntu-latest
-      container_image: ubuntu:devel
       use_devel_sources: false
       create_release: false
     secrets: inherit
