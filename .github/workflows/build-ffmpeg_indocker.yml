@@ -173,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           apt-get -yqq update
-          packages=(
+          base_packages=(
             autoconf
             automake
             build-essential
@@ -181,15 +181,6 @@ jobs:
             cmake
             curl
             git
-            libaom-dev
-            libdav1d-dev
-            libmp3lame-dev
-            libopus-dev
-            libsvtav1-dev
-            libvorbis-dev
-            libvpx-dev
-            libx264-dev
-            libx265-dev
             meson
             nasm
             ninja-build
@@ -199,7 +190,34 @@ jobs:
             yasm
             zlib1g-dev
           )
-          apt-get -yqq install "${packages[@]}"
+
+          optional_codec_packages=(
+            libaom-dev
+            libdav1d-dev
+            libmp3lame-dev
+            libopus-dev
+            libsvtav1-dev
+            libvorbis-dev
+            libvpx-dev
+            libx264-dev
+            libx265-dev
+          )
+
+          apt-get -yqq install "${base_packages[@]}"
+
+          available_optional_packages=()
+          for pkg in "${optional_codec_packages[@]}"; do
+            if apt-cache show "${pkg}" >/dev/null 2>&1; then
+              available_optional_packages+=("${pkg}")
+            else
+              echo "::warning::Optional package ${pkg} is not available in current APT sources and will be skipped"
+            fi
+          done
+
+          if [[ "${#available_optional_packages[@]}" -gt 0 ]]; then
+            apt-get -yqq install "${available_optional_packages[@]}"
+          fi
+
           apt-get -yqq autoremove --purge
           apt-get -yqq clean
 
