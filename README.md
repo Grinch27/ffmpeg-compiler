@@ -23,7 +23,7 @@ GitHub Actions workflows for building FFmpeg from upstream `master` and running 
 - `.github/workflows/call-build.yml`
   - Scheduled/matrix caller workflow.
 - `.github/workflows/ci.yml`
-  - Push/PR auto CI workflow that tests both `build-ffmpeg_dev.yml` and `build-ffmpeg_indocker_dev.yml`, then posts failure summary.
+  - Push/PR auto CI workflow that tests both `build-ffmpeg_dev.yml` and `build-ffmpeg_indocker_dev.yml`.
 
 ## Important compatibility behavior
 
@@ -72,11 +72,7 @@ It runs these two workflows every time:
 - `build-ffmpeg_dev.yml`
 - `build-ffmpeg_indocker_dev.yml`
 
-On failure it will:
-
-- Generate a compact failure summary (failed jobs and failed steps).
-- Publish the summary to run summary and as artifact `ci-failure-summary-<run_id>`.
-- Auto-comment the summary on pull requests (visible in VS Code GitHub Pull Requests).
+On failure each build workflow still uploads logs and artifacts, including `failure-summary.md` when available.
 
 Then you can ask Copilot in VS Code to fix based on that summary and push again to retrigger CI.
 

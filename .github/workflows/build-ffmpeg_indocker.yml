@@ -336,8 +336,26 @@ jobs:
             ENCODER="librav1e"
             ENC_OPTS=(-speed 8 -qp 100)
           else
-            echo "No AV1 encoder available in built FFmpeg" >&2
-            exit 1
+            echo "::warning::No AV1 encoder available in built FFmpeg; AV1 compression test will be skipped"
+            input_size="$(stat -c '%s' "${INPUT_FILE}")"
+            {
+              echo "status=skipped_no_av1_encoder"
+              echo "encoder=none"
+              echo "input_size=${input_size}"
+              echo "output_size=0"
+              echo "ratio_percent=0.00"
+              echo "saved_percent=0.00"
+            } | tee -a "${GITHUB_OUTPUT}"
+
+            {
+              echo "status=skipped_no_av1_encoder"
+              echo "reason=no_av1_encoder"
+              echo "input_size_bytes=${input_size}"
+              echo "output_size_bytes=0"
+              echo "output_vs_input_percent=0.00"
+              echo "saved_percent=0.00"
+            } | tee "${METRIC_FILE}"
+            exit 0
           fi
 
           "${FFMPEG_BIN}" -hide_banner -y \
@@ -359,6 +377,7 @@ jobs:
           saved_percent="$(awk -v x="${ratio_percent}" 'BEGIN {printf "%.2f", 100-x}')"
 
           {
+            echo "status=success"
             echo "encoder=${ENCODER}"
             echo "input_size=${input_size}"
             echo "output_size=${output_size}"
@@ -396,6 +415,7 @@ jobs:
             echo "- Repository: ${repo_target}"
             echo "- Branch: ${branch}"
             echo "- Commit: ${{ steps.git-rev.outputs.git_hash }}"
+            echo "- AV1 Test Status: ${{ steps.av1-test.outputs.status }}"
             echo "- AV1 Encoder: ${{ steps.av1-test.outputs.encoder }}"
             echo "- Input Size: ${{ steps.av1-test.outputs.input_size }} bytes"
             echo "- Output Size: ${{ steps.av1-test.outputs.output_size }} bytes"
@@ -454,7 +474,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-${{ steps.vars.outputs.branch }}-${{ steps.git-rev.outputs.git_desc }}
+          name: ffmpeg-docker-${{ steps.vars.outputs.branch }}-${{ steps.git-rev.outputs.git_desc }}
           path: |
             ${{ env.path_output }}/*
             ${{ env.path_logs }}/*
