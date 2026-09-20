@@ -1,0 +1,104 @@
+# 关键需求：从本仓库 Release 下载用户视频，生成 AV1 MP4 和报告。
+# 待确认：最终主观画质；后续研究：HDR/字幕/非 AAC 音轨。
+# 风险：公开仓库的输入与产物可能公开；Actions 时长和存储受配额限制。
+# 优化：独立于 FFmpeg 编译流程；验证：下载边界、完整编码及解码、云端实跑。
+name: Compress Video to AV1 MP4
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_id:
+        description: 'Source Release asset ID in this repository'
+        required: true
+        type: string
+      crf:
+        description: 'Quality: lower is better/larger (1-40)'
+        default: '30'
+        type: string
+      preset:
+        description: 'Speed: lower is slower (4-9)'
+        default: '6'
+        type: string
+
+run-name: AV1 MP4 - asset ${{ inputs.asset_id }} - CRF ${{ inputs.crf }}
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ffmpeg
+          ffmpeg -version
+      - name: Download Release asset
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_ID: ${{ inputs.asset_id }}
+        run: |
+          set -euo pipefail
+          [[ "$ASSET_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid asset ID'; exit 1; }
+          mkdir -p input
+          gh api "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" > input/asset.json
+          python3 - <<'PY'
+          import json, shutil
+          asset = json.load(open('input/asset.json'))
+          size = asset['size']
+          if not 0 < size < 2 * 1024**3:
+              raise SystemExit('Input must be nonempty and smaller than 2 GiB')
+          if shutil.disk_usage('.').free < size * 4:
+              raise SystemExit('Insufficient free disk space')
+          PY
+          gh api -H 'Accept: application/octet-stream' \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" > input/source.mp4
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          asset = json.load(open('input/asset.json'))
+          source = pathlib.Path('input/source.mp4')
+          if source.stat().st_size != asset['size']:
+              raise SystemExit('Downloaded size mismatch')
+          digest = asset.get('digest')
+          if digest and digest.startswith('sha256:'):
+              with source.open('rb') as stream:
+                  actual = 'sha256:' + hashlib.file_digest(stream, 'sha256').hexdigest()
+              if actual != digest:
+                  raise SystemExit('Downloaded SHA-256 mismatch')
+          PY
+      - name: Encode and verify
+        timeout-minutes: 310
+        env:
+          CRF: ${{ inputs.crf }}
+          PRESET: ${{ inputs.preset }}
+        run: |
+          python3 scripts/compress_av1.py input/source.mp4 \
+            --output-dir output --crf "$CRF" --preset "$PRESET" --threads 4
+      - name: Upload completed video
+        uses: actions/upload-artifact@v4
+        with:
+          name: av1-mp4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/output_av1.mp4
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload reports and logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: av1-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/*.json
+            output/*.md
+            output/*.log
+          if-no-files-found: warn
+          retention-days: 7

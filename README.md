@@ -1,5 +1,55 @@
 # ffmpeg-compiler
 
+## 用户视频 → AV1 MP4
+
+新增独立工作流 `.github/workflows/compress-av1.yml`，手动读取**本仓库 Release 附件 ID**，
+输出 AV1 MP4（随原视频保持 8/10-bit）、压缩报告和日志，不重复编译 FFmpeg，不自动发布成品 Release。
+参考 U-Boot All in One 的输入、执行、报告和产物阶段，使用普通 `ubuntu-24.04` runner
+和最小 `contents: read` 权限。FFmpeg 来自 Ubuntu APT，具体版本写入报告，未锁定包版本。
+
+### 已上传的测试输入
+
+- Release: https://github.com/Grinch27/ffmpeg-compiler/releases/tag/av1-test-110594-20260921
+- 文件：`110594-1080p.mp4`；附件 ID：`577680438`；大小：19,439,290 字节。
+- 约 90 秒、1502×1080、30 fps、H.264 + AAC；SAR `31279:30892`，不能强制改为方形像素。
+- 该仓库公开，Release 原视频可公开下载。
+
+### 运行与下载
+
+1. 工作流部署到默认分支后，进入 Actions → Compress Video to AV1 MP4 → Run workflow。
+2. 填写 `asset_id=577680438`，建议先用 `crf=30`、`preset=6`。
+3. 从运行页面下载 `av1-mp4-<run_id>-<attempt>` 和 `av1-report-<run_id>-<attempt>`。
+4. Summary 展示体积、节省比例、编码耗时和验证结果；Artifact 保存 7 天。
+
+后续输入先上传到本仓库 Release，再读取附件 ID。Actions 表单没有文件上传控件。
+下载按本仓库附件 ID 定位，凭据只传给下载步骤，不接受任意脚本或 URL。
+
+### 支持范围和质量边界
+
+- 单视频流、逐行 SDR 4:2:0，支持无音轨或多个 AAC 音轨，音频直接复制。
+- 位深随源：`yuv420p` → 8-bit AV1；`yuv420p10le` → 10-bit AV1，验证输出位深一致。
+- 保留分辨率、帧时间节奏、显示比例、元数据和章节；HDR、旋转/附加视频 side data、
+  字幕、数据流、非 AAC 音频明确失败，避免静默丢弃或未经确认转换。
+- CRF 1–40，preset 4–9；CRF 越低通常越大，preset 越低通常越慢。
+- 默认 CRF 30 / preset 6 是画质优先的起点，有损转码不保证缩小，也不保证肉眼无损。
+- 报告检查 AV1、分辨率、平均帧率、SAR、解码帧数、音轨参数、时长差≤0.1秒和完整解码。
+  不含 VMAF/SSIM；最终画质需要观看成品确认。
+- 输入小于 2 GiB；下载前检查磁盘；编码步骤限时 310 分钟，整个 job 限时 350 分钟。
+  文件过大、下载失败、输入不支持或编码失败时退出非零；未验证的 partial 文件不上传为成品。
+- GitHub 托管运行时长、Artifact 存储和权限仍受账户配额限制。
+
+### 本地执行
+
+依赖 Python 3、带 `libsvtav1` 的 FFmpeg 和 ffprobe，无 Python 第三方依赖。
+输出目录必须不存在，避免覆盖旧结果。
+
+```bash
+python3 scripts/compress_av1.py /path/to/input.mp4 --output-dir /path/to/new-output --crf 30 --preset 6 --threads 4
+```
+
+`report.json` 保存输入/输出探测结果及 FFmpeg 版本；`encode.log` 包含 SVT-AV1 实际版本。
+本地测试不能替代 GitHub runner 实际运行验证。
+
 GitHub Actions workflows for building FFmpeg from upstream `master` and running AV1 compression tests.
 
 ## What this project does
