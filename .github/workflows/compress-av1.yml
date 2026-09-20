@@ -104,7 +104,7 @@ jobs:
           path: output/output_av1.mp4
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
+          retention-days: 3
       - name: Upload reports and logs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -117,4 +117,4 @@ jobs:
             runtime/*.json
             runtime/*.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 3

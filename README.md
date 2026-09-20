@@ -22,7 +22,8 @@
 1. 工作流部署到默认分支后，进入 Actions → Compress Video to AV1 MP4 → Run workflow。
 2. 填写 `asset_id=577680438`，建议先用 `crf=30`、`preset=6`。
 3. 从运行页面下载 `av1-mp4-<run_id>-<attempt>` 和 `av1-report-<run_id>-<attempt>`。
-4. Summary 展示体积、节省比例、编码耗时和验证结果；Artifact 保存 7 天。
+4. Summary 展示体积、节省比例、编码耗时和验证结果；成品、报告和日志 Artifact 均保存 3 天。
+   此设置适用于后续上传，不会修改既有 Artifact 的到期时间，也不改变输入 Release 附件的保留期限。
 
 后续输入先上传到本仓库 Release，再读取附件 ID。Actions 表单没有文件上传控件。
 下载按本仓库附件 ID 定位，凭据只传给下载步骤，不接受任意脚本或 URL。
