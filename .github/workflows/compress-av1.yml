@@ -1,4 +1,4 @@
-# 关键需求：从本仓库 Release 下载用户视频，生成 AV1 MP4 和报告。
+# 关键需求：每次拉取 Docker Hub linuxserver/ffmpeg:latest，使用 Release 视频生成 AV1 MP4 和报告。
 # 待确认：最终主观画质；后续研究：HDR/字幕/非 AAC 音轨。
 # 风险：公开仓库的输入与产物可能公开；Actions 时长和存储受配额限制。
 # 优化：独立于 FFmpeg 编译流程；验证：下载边界、完整编码及解码、云端实跑。
@@ -36,11 +36,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Install FFmpeg
+      - name: Pull latest FFmpeg from Docker Hub
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y ffmpeg
-          ffmpeg -version
+          set -euo pipefail
+          mkdir -p runtime
+          image=docker.io/linuxserver/ffmpeg:latest
+          docker pull "$image"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          docker image inspect "$image_id" > runtime/image.json
+          printf 'FFMPEG_DOCKER_IMAGE=%s\n' "$image_id" >> "$GITHUB_ENV"
+          printf 'FFMPEG_IMAGE_METADATA=runtime/image.json\n' >> "$GITHUB_ENV"
+          docker run --rm --network=none --entrypoint ffmpeg "$image_id" -version > runtime/ffmpeg-version.log
+          docker run --rm --network=none --entrypoint ffmpeg "$image_id" -hide_banner -encoders > runtime/encoders.log
+          grep -q libsvtav1 runtime/encoders.log
+          {
+            printf '### Docker runtime\n\n- Requested: `%s`\n- Image ID: `%s`\n' "$image" "$image_id"
+            docker image inspect "$image_id" --format 'Repo digests: {{json .RepoDigests}}'
+            head -n 1 runtime/ffmpeg-version.log
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Download Release asset
         timeout-minutes: 15
         env:
@@ -100,5 +114,7 @@ jobs:
             output/*.json
             output/*.md
             output/*.log
+            runtime/*.json
+            runtime/*.log
           if-no-files-found: warn
           retention-days: 7
