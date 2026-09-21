@@ -1,4 +1,4 @@
-# 关键需求：动态解析最新 Ubuntu x64 runner，不使用 toolchain；action 每次拉取 Docker Hub latest 并输出 AV1 MP4。
+# 关键需求：动态 runner → action；支持 Release 或只读批量处理 OneDrive 根目录 ffmpeg；Artifact 保留 3 天。
 # 待确认：最终主观画质；后续研究：HDR/字幕/非 AAC 音轨。
 # 风险：公开仓库的输入与产物可能公开；Actions 时长和存储受配额限制。
 # 优化：独立于 FFmpeg 编译流程；验证：下载边界、完整编码及解码、云端实跑。
@@ -7,9 +7,21 @@ name: Compress Video to AV1 MP4
 on:
   workflow_dispatch:
     inputs:
+      source_type:
+        description: "Input source (OneDrive reads direct video files in root/ffmpeg)"
+        required: true
+        default: onedrive
+        type: choice
+        options:
+          - onedrive
+          - release
       asset_id:
         description: "Source Release asset ID in this repository"
-        required: true
+        required: false
+        type: string
+      max_files:
+        description: "OneDrive safety limit (1-100); fail before downloading if exceeded"
+        default: "10"
         type: string
       crf:
         description: "Quality: lower is better/larger (1-40)"
@@ -20,7 +32,7 @@ on:
         default: "6"
         type: string
 
-run-name: AV1 MP4 - asset ${{ inputs.asset_id }} - CRF ${{ inputs.crf }}
+run-name: AV1 MP4 - ${{ inputs.source_type }} - CRF ${{ inputs.crf }}
 permissions:
   contents: read
 
@@ -87,6 +99,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download Release asset
+        if: ${{ inputs.source_type == 'release' }}
         timeout-minutes: 350
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,6 +134,7 @@ jobs:
                   raise SystemExit('Downloaded SHA-256 mismatch')
           PY
       - name: Encode and verify
+        if: ${{ inputs.source_type == 'release' }}
         timeout-minutes: 350
         env:
           CRF: ${{ inputs.crf }}
@@ -129,12 +143,43 @@ jobs:
           python3 scripts/compress_av1.py input/source.mp4 \
             --output-dir output --crf "$CRF" --preset "$PRESET" --threads 4
 
+      - name: Install rclone for OneDrive
+        if: ${{ inputs.source_type == 'onedrive' }}
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y rclone
+          rclone version > runtime/rclone-version.log
+
+      - name: Download and encode OneDrive ffmpeg folder
+        if: ${{ inputs.source_type == 'onedrive' }}
+        timeout-minutes: 310
+        env:
+          ONEDRIVE_RCLONE_CONFIG: ${{ secrets.ONEDRIVE_RCLONE_CONFIG }}
+          CRF: ${{ inputs.crf }}
+          PRESET: ${{ inputs.preset }}
+          MAX_FILES: ${{ inputs.max_files }}
+        run: |
+          python3 scripts/onedrive_batch.py \
+            --crf "$CRF" --preset "$PRESET" --max-files "$MAX_FILES"
+
       - name: Upload completed video
+        if: ${{ success() && inputs.source_type == 'release' }}
         uses: actions/upload-artifact@main
         with:
           name: av1-mp4-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/output_av1.mp4
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Upload completed OneDrive videos
+        if: ${{ !cancelled() && inputs.source_type == 'onedrive' }}
+        uses: actions/upload-artifact@main
+        with:
+          name: av1-mp4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/*/output_av1.mp4
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 3
 
@@ -147,6 +192,9 @@ jobs:
             output/*.json
             output/*.md
             output/*.log
+            output/*/*.json
+            output/*/*.md
+            output/*/*.log
             runtime/*.json
             runtime/*.log
           if-no-files-found: warn

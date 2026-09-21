@@ -2,7 +2,9 @@
 
 ## 用户视频 → AV1 MP4
 
-新增独立工作流 `.github/workflows/compress-av1.yml`，手动读取**本仓库 Release 附件 ID**，
+OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。默认来源 `onedrive`，逐个处理 `od:ffmpeg` 直接子视频文件；本地授权入口 `bash scripts/connect_onedrive.sh`。需要先由本人完成微软浏览器授权并设置专用 Secret。
+
+独立工作流 `.github/workflows/compress-av1.yml` 支持 **OneDrive 根目录 ffmpeg 批处理**和**本仓库 Release 附件 ID**，
 输出 AV1 MP4（随原视频保持 8/10-bit）、压缩报告和日志，不重复编译 FFmpeg，不自动发布成品 Release。
 参考 U-Boot All in One 的 `runner-image → action` 结构，不引入 toolchain。
 `runner-image` 在 `ubuntu-latest` 上调用 `Grinch27/github-actions/.github/actions/resolve-runner-image@main`，
@@ -23,7 +25,7 @@
 ### 运行与下载
 
 1. 工作流部署到默认分支后，进入 Actions → Compress Video to AV1 MP4 → Run workflow。
-2. 填写 `asset_id=577680438`，建议先用 `crf=30`、`preset=6`。
+2. Release 测试选择 `source_type=release`、`asset_id=577680438`；OneDrive 选择 `source_type=onedrive`。建议先用 `crf=30`、`preset=6`。
 3. 从运行页面下载 `av1-mp4-<run_id>-<attempt>` 和 `av1-report-<run_id>-<attempt>`。
 4. Summary 展示体积、节省比例、编码耗时和验证结果；成品、报告和日志 Artifact 均保存 3 天。
    此设置适用于后续上传，不会修改既有 Artifact 的到期时间，也不改变输入 Release 附件的保留期限。
