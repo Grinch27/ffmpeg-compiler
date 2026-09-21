@@ -1,3 +1,11 @@
+# 冻结基线：2026-09-22；冻结当前功能与默认参数，后续功能变更需另行明确提出。
+# 已验证源码：16ca204895bca288120952fe7b8f7a20bb1f855c。
+# 云端验收：https://github.com/Grinch27/ffmpeg-compiler/actions/runs/35616764844（成功）。
+# 基线参数：CRF=30、preset=6、编码线程=4；MP4 AV1，按源选择 8/10-bit。
+# 数据路径：OneDrive ffmpeg → action 内下载/编码/解码验证 → ffmpeg-output → 回传字节校验。
+# Artifact 仅备份成品及报告，保留 3 天，不作为 job 间源视频中转。
+# 依赖：scripts/onedrive_batch.py、scripts/compress_av1.py 与本基线配套，文件不能单独迁移。
+# 版本策略沿用现状：动态 runner、linuxserver/ffmpeg:latest、Actions @main；并非依赖版本锁定。
 # 关键需求：动态 runner → action；同一 job 下载、压缩、回传 OneDrive ffmpeg-output；无 Artifact 中转。
 # 待确认：最终主观画质；后续研究：HDR/字幕/非 AAC 音轨。
 # 风险：公开仓库的输入与产物可能公开；Actions 时长和存储受配额限制。
