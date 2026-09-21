@@ -1,134 +1,237 @@
-# OneDrive 个人账户 → GitHub Actions AV1 批处理部署
+# OneDrive → GitHub Actions AV1 MP4 部署指南
 
-## 当前实现与边界
+## 1. 当前路线和验证边界
 
-- 仓库：`Grinch27/ffmpeg-compiler`（公开）；用户已明确允许 ffmpeg 专用目录的视频云端处理和公开仓库 Artifact 交付。
-- 源目录固定为所选 OneDrive 根目录下的 `ffmpeg`，remote 固定为 `od`；只处理直接子文件，不递归。
-- 首版每次最多 10 个视频；可在表单调整 max_files（1–100）。超限会整体拒绝，不会静默只取前几个。
-- 单文件必须非空且小于 2 GiB；根据扩展名筛选视频，编码器仍会拒绝不支持的媒体内容。
-- CRF 30、preset 6、lp=4，源 8/10-bit，AAC 复制；不支持 HDR/字幕/非 AAC 音轨等既有边界保持不变。
-- 源目录 ffmpeg 不写入、不删除；成品写入 ffmpeg-output；本地临时下载副本会自动清理。每次重新运行都会重新处理文件，不会标记“已处理”。
-- 按文件名排序，结果目录为 `0001`、`0002` 等；`batch.json` 提供原文件名和结果目录的映射。
-- 某文件失败继续处理其余文件；已有成功 MP4 仍上传，整批有失败则任务标记失败。取消/强制超时可能来不及上传。
-- 成品和报告 Artifact 均保存 3 天。下载配置不在工作区、不传入编码子进程、不上传 Artifact。
-- GitHub Secret 里的刷新令牌不会自动更新；到期或撤销授权后需要再次运行连接脚本。
+唯一视频来源是个人 OneDrive 根目录 `ffmpeg`。工作流文件为 `.github/workflows/compress-av1.yml`，不再提供来源选择或附件 ID。
 
-## 1. 准备 OneDrive 文件夹
+流程：`runner-image` 选择最新可用 Ubuntu → `action` 拉取 `linuxserver/ffmpeg:latest` → rclone 下载 → AV1 编码及完整解码验证 → rclone 回传 `ffmpeg-output` → 读回字节校验。
+下载、编码、回传全部在同一个 `action` job 中执行，Artifact 只备份最终成品和报告，保留 3 天，不作源视频中转。本机只负责授权与连接检查，不执行视频压缩。
 
-登录自己的 OneDrive，在根目录创建 `ffmpeg`，先放一段小型、非敏感测试视频。
-例如 `ffmpeg/110594-1080p.mp4`。等上传完成后再测试。
-目录限制只是程序行为，不是微软服务端的文件夹级授权隔离。
+- 默认 CRF 30、preset 6、编码线程 4；输出 MP4，保留源 8/10-bit，AAC 音频复制。
+- 只读取 `ffmpeg` 的直接视频文件，不递归；每次按文件名排序重新处理全部匹配文件。
+- `max_files` 默认 10，可设 1–100；超过上限整批拒绝，不是只取前 N 个。首次只放一个测试视频并设 1。
+- 单文件须非空且小于 2 GiB；HDR、字幕、非 AAC 音轨、旋转 side data 等现有不支持内容会明确失败。
+- 不删除或改写源视频；每次输出使用独立目录，防止覆盖历史成品。
+- 个别文件失败继续其他文件，整批最终失败；已经通过编码验证的本地成品仍可备份为 Artifact。只有回传校验通过才计入批处理成功数。
+- `action` 限时 350 分钟，批处理步骤限时 310 分钟；取消或强制终止不保证来得及保存报告。
+- OneDrive 路线已在 [运行 35616764844](https://github.com/Grinch27/ffmpeg-compiler/actions/runs/35616764844) 验证下载、压缩、回传成功。当前移除旧输入分支后的文件仍需另行云端重跑验收。
 
-## 2. 使用 rclone 内置 Microsoft 应用
+## 2. 先准备账户和目录
 
-无需自行注册 Entra 应用或客户端密钥。client_id、client_secret 留空。
-必须在浏览器授权 `Files.ReadWrite offline_access User.Read`，回传需要写入权限。
-如果之前只有 Files.Read，仅修改配置字符串不会升级令牌；必须重新浏览器授权。
-Files.ReadWrite 覆盖账户文件，源目录只读和仅写 ffmpeg-output 由代码约束，不是服务端文件夹级隔离。
-参考：https://rclone.org/onedrive/
+1. 打开 [OneDrive](https://onedrive.live.com/)，用存放视频的个人 Microsoft 账户登录；没有账户时按微软页面注册并自行完成验证。
+2. 首次使用先确认能进入“我的文件”，并有足够空间容纳源视频和成品。不要把账户登录成功等同于网盘已完成初始化。
+3. 在“我的文件”根目录创建 `ffmpeg`，上传 `110594-1080p.mp4` 或其他允许公开处理的测试视频，等待上传结束。
+4. 输出根目录为 `ffmpeg-output`，工作流回传时可自动创建，也可以在网页上预先创建。
+5. 使用自己的个人网盘目录，不用“共享给我”的目录、快捷方式或分享链接。路径不是电脑上的 `Documents/ffmpeg`。
 
-## 3. 在自己的本地终端完成 rclone 授权
-
-先确认 rclone 可用：
-
-```bash
-/home/user/.local/bin/rclone version
+```text
+我的文件/
+├── ffmpeg/
+│   └── 110594-1080p.mp4
+└── ffmpeg-output/
+    └── <run_id>-<attempt>-<随机后缀>/
+        └── 0001/
+            ├── output_av1.mp4
+            ├── report.json
+            └── report.md
 ```
 
-如果该可执行文件不存在，可从 https://rclone.org/install/ 安装官方版本。
-在自己能够打开浏览器的终端执行连接脚本（不要把交互输出贴到聊天中）：
+## 3. 理解需要取得的三类权限
 
-```bash
-bash /home/user/github/ffmpeg-compiler/scripts/connect_onedrive.sh
+| 层次 | 必需权限/凭据 | 获取位置及用途 |
+|---|---|---|
+| Microsoft / OneDrive | 用户委托 OAuth 授权 | 浏览器登录个人账户并同意 rclone 访问，用于下载和回传 |
+| 本机 rclone | 专用配置中的访问令牌和刷新令牌 | rclone 在浏览器授权后自动保存，文件权限设为 600 |
+| GitHub | 仓库 Actions Secret 管理权限；触发 Actions 的权限 | 用有相应仓库权限的 GitHub 账户登录 gh；管理员可配置 Secret |
+
+rclone 不是另外一个需要购买权限的云服务。它使用 Microsoft OAuth；不需要提供 OneDrive 密码给 GitHub。
+本方案使用 rclone 内置 Microsoft 应用，**不需要 Entra 租户、自建应用、Client ID、Client Secret 或 Azure 订阅**。客户端 ID 和密钥字段留空，使用共享应用；遇到限流时重试，不能通过扩大文件权限解决限流。
+
+高级配置必须显式填写以下三个 scopes：
+
+```text
+Files.ReadWrite offline_access User.Read
 ```
 
-连接脚本会先提示其行为，再进入 rclone 的交互配置：
+| Scope | 用途 | 边界 |
+|---|---|---|
+| `Files.ReadWrite` | 读取源视频、创建输出目录、上传成品和报告 | 允许读取、创建、修改、删除登录用户的文件；并非仅授权两个文件夹 |
+| `offline_access` | 取得刷新令牌，让无人值守 Actions 刷新访问令牌 | 不是永久有效承诺，撤销授权或微软策略仍可能使其失效 |
+| `User.Read` | 读取登录账户的基本资料 | 不需要额外目录管理员权限 |
 
-| 提示 | 填写 |
+不要添加 `Files.ReadWrite.All`、`Sites.Read.All` 或其他无关权限。本方案不使用应用级权限或 client-credentials 流程。
+`ffmpeg` 只读和只写 `ffmpeg-output` 是代码约束，**不是 Microsoft 服务端的文件夹级隔离**。若不接受账户级文件读写权限，应停止授权，改用专门的个人账户存放可公开处理的视频。
+
+依据：[rclone OneDrive 文档](https://rclone.org/onedrive/)、[Microsoft Files.ReadWrite 定义](https://learn.microsoft.com/en-us/graph/permissions-reference#filesreadwrite)、[Microsoft offline_access](https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope)。
+
+## 4. 本机工具准备
+
+以下命令适用于当前 Linux 电脑；换机器需修改仓库路径。在同一个终端依次执行后续命令，保留这些变量：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+ONEDRIVE_REPO_DIR=/home/user/github/ffmpeg-compiler
+ONEDRIVE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/rclone/ffmpeg-onedrive.conf"
+umask 077
+mkdir -p "$(dirname "$ONEDRIVE_CONFIG")"
+rclone version
+python3 --version
+gh --version
+```
+
+缺少工具时从 [rclone 官方安装说明](https://rclone.org/install/) 和 [GitHub CLI 安装说明](https://cli.github.com/) 安装对应系统版本。不要从未知网站下载附带“网盘令牌”的配置。
+
+```bash
+gh auth status
+```
+
+如果尚未登录，运行 `gh auth login`，选择 GitHub.com、HTTPS、浏览器登录，登录可管理 `Grinch27/ffmpeg-compiler` 的账户。它与 Microsoft 账户可以不同。
+上传配置前确认目标仓库正确；迁移至自己的仓库时，下面命令及连接脚本里的仓库名称都需修改。
+
+## 5. 新建 rclone remote 并完成 Microsoft 授权
+
+为避免将其他网盘凭据上传到 GitHub，使用单独的配置文件，仅包含 `[od]`：
+
+```bash
+rclone --config "$ONEDRIVE_CONFIG" config
+```
+
+按字段名称操作，不依赖菜单编号：
+
+| 提示 | 填写或选择 |
 |---|---|
-| New remote | n |
-| name | od |
-| Storage | onedrive |
-| client_id | 留空（内置应用） |
-| client_secret | 留空（内置应用） |
-| region | Global（普通国际版个人账户） |
-| Edit advanced config | y |
-| access_scopes | Files.ReadWrite offline_access User.Read |
-| root_folder_id | 留空 |
-| 其他高级参数 | 未有明确需要时保留默认 |
-| Use web browser | y |
-| 网盘类型 | OneDrive Personal or Business |
-| 网盘选择 | 自己的个人网盘，确认根目录 |
-| 保存 remote | y，然后退出配置菜单 |
+| `New remote` | `n`；已有 `od` 时改用编辑，不要创建重复 remote |
+| `name` | `od` |
+| `Storage` | `onedrive` 或 Microsoft OneDrive |
+| `client_id` / `client_secret` | 留空；编辑旧配置时回车可能保留原值，需按提示清除自建应用凭据 |
+| `region` | Global / `global`（普通国际版个人账户） |
+| `Edit advanced config?` | `y` |
+| `access_scopes` | `Files.ReadWrite offline_access User.Read` |
+| `root_folder_id` | 留空：要选择网盘根目录，不要把 remote 根设成 ffmpeg |
+| `auth_url` / `token_url` | 留空，不填此前 Entra 报错页面的租户地址 |
+| 其他高级选项 | 保持默认，不启用 client-credentials |
+| `Use web browser to automatically authenticate?` | 有本机浏览器选择 `y` |
 
-浏览器中登录目标个人 Microsoft 账户，检查应用名及文件读写权限后同意；这次写入权限用于回传成品。
-不要为这份专用配置设置额外的 rclone 配置加密密码，当前工作流只接收独立明文配置并由 GitHub Secrets 加密保存。
+浏览器操作：
 
-脚本会在本地验证配置和 `od:ffmpeg` 可达性，然后上传仓库 Secret：`ONEDRIVE_RCLONE_CONFIG`。
-配置路径：`/home/user/.config/rclone/ffmpeg-onedrive.conf`（设置 XDG_CONFIG_HOME 时跟随该目录），权限 600。
-仅此一个专用 remote 可上传，不能混入其他网盘配置。
+1. 保持终端运行，使用 rclone 本次自动打开的登录页面，而不是旧 Entra 门户页面。
+2. 登录存放 `ffmpeg` 的个人账户；检查账户是否正确。
+3. 核对应用及文件读写、基本资料、持续访问权限；由你本人确认同意。不要把授权码、回调 URL 或令牌发给其他人。
+4. 浏览器显示 `Success!` 后回终端继续。没有自动打开时，在**运行 rclone 的同一台电脑**打开终端打印的 `http://127.0.0.1:53682/auth?...` 完整地址。授权服务只在当前进程运行期间有效。
+5. 选择 `OneDrive Personal or Business`，再选自己的网盘；确认结果类型为 `personal`。该选项名称包含 Business，不代表应选组织网盘。
+6. 确认保存 `od`，再输入 `q` 退出配置菜单。
 
-脚本不会把密钥作为命令行参数，也不会主动打印配置；rclone 自己的交互界面可能显示 token，因此只在自己的终端操作。
-如果机器不能打开浏览器，按 https://rclone.org/remote_setup/ 的无界面授权步骤处理，不要通过聊天传递 token。
+不要为该专用配置设置 rclone 配置加密密码：当前工作流没有解密流程。改以本机权限 600 和 GitHub Secret 保管。rclone 交互界面可能显示 token，不要共享完整终端、截图或配置。
 
-## 4. 检查 Secret 是否设置成功
+如果本机没有浏览器，可按 [rclone 无界面授权说明](https://rclone.org/remote_setup/) 在可信电脑完成授权并私下传回授权结果；不要借用公共网站中转令牌。
+
+## 6. 从旧只读授权升级 / 令牌重新授权
+
+已有 `Files.Read` 配置时，先用上一节的 `config` 菜单编辑 `od`，将高级 `access_scopes` 改成规定的三个值，保存退出。然后必须重新授权：
 
 ```bash
+rclone --config "$ONEDRIVE_CONFIG" config reconnect od:
+```
+
+本人在浏览器同意文件读写权限，回终端完成提示。仅修改 scopes 字符串不会升级旧令牌。令牌失效时也使用此命令；若原来已是相同权限，属于重新连接。
+不要重新创建已验证的网盘条目或凭空猜测 drive_id；保留原来正确的个人网盘选择。完成后继续连接验证，并重新上传 GitHub Secret，云端不会自动取得本机新配置。
+
+## 7. 验证配置、读取和写入权限
+
+先验证配置结构，不输出凭据：
+
+```bash
+chmod 600 "$ONEDRIVE_CONFIG"
+python3 - "$ONEDRIVE_REPO_DIR" "$ONEDRIVE_CONFIG" <<'PY'
+# 验证重点：结构通过不等于令牌权限已生效；不输出凭据或异常原文。
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'scripts'))
+from onedrive_batch import validate_config
+try:
+    validate_config(Path(sys.argv[2]).read_text())
+except Exception:
+    raise SystemExit('配置不符合要求，请在本机检查 od/type/scopes/token/drive_id/root_folder_id；不要粘贴令牌。')
+print('专用配置结构检查通过')
+PY
+```
+
+只列出源目录的直接文件，核对测试视频名称：
+
+```bash
+rclone --config "$ONEDRIVE_CONFIG" lsf od:ffmpeg --files-only --max-depth 1
+```
+
+创建目标目录；不存在时可初步验证创建目录权限，已存在时成功不证明文件上传权限：
+
+```bash
+rclone --config "$ONEDRIVE_CONFIG" mkdir od:ffmpeg-output
+```
+
+真正的文件写入验收以首次 Actions 成品上传及 `check --download` 读回比对为准，不通过修改配置文本或目录存在来宣称已验证。
+
+## 8. 保存 GitHub Actions Secret
+
+完成上述验证后，将**整个专用配置文件**通过标准输入上传，不在命令行参数中粘贴 token：
+
+```bash
+gh secret set ONEDRIVE_RCLONE_CONFIG --repo Grinch27/ffmpeg-compiler < "$ONEDRIVE_CONFIG"
 gh secret list --repo Grinch27/ffmpeg-compiler
 ```
 
-应看到名称 `ONEDRIVE_RCLONE_CONFIG`。列表只显示名称，不显示密钥值。
-也可访问仓库 Settings → Secrets and variables → Actions。
+应在名称列表看到 `ONEDRIVE_RCLONE_CONFIG`；列表不显示值。CLI 会在本地加密后发送到 GitHub，见 [gh secret set](https://cli.github.com/manual/gh_secret_set)。
 
-## 5. 首次云端测试
+网页替代方式：仓库 Settings → Secrets and variables → Actions → New repository secret；名称填 `ONEDRIVE_RCLONE_CONFIG`，Secret 内容填专用配置全文。不能只填 token，也不要 base64 编码，更不要放入普通 Variables、工作流 YAML、Issue 或仓库文件。网页保存操作由本人在私有环境完成。
+如提示无权限，使用仓库管理员账户或请管理员设置；不要把个人 GitHub PAT 另放进视频处理工作流。运行时仍保持 `contents: read`，访问 OneDrive 使用上述专用 Secret。
 
-先确保 ffmpeg 文件夹只有一段测试视频；本工作流会处理目录中全部匹配的视频，而非只处理最新文件。
-进入 Actions → Compress Video to AV1 MP4 → Run workflow：
+已有便捷脚本：
 
-- source_type：onedrive
-- asset_id：留空
-- max_files：10
-- crf：30
-- preset：6
+```bash
+bash "$ONEDRIVE_REPO_DIR/scripts/connect_onedrive.sh"
+```
 
-等价命令：
+它会启动交互配置、检查配置及源目录，并上传 Secret。与本节手动流程二选一即可；它不会自动替你同意微软新增权限，也不会执行真实写入测试。只读配置升级仍需完成第 6 节重新授权。
+
+## 9. 在 GitHub Actions 运行和验收
+
+进入仓库 Actions → Compress Video to AV1 MP4 → Run workflow → 分支 main。只需填写 `max_files`、`crf`、`preset`，不再填写来源或附件字段。
+
+首次仅放一个测试视频：
 
 ```bash
 gh workflow run compress-av1.yml --repo Grinch27/ffmpeg-compiler --ref main \
-  -f source_type=onedrive -f max_files=10 -f crf=30 -f preset=6
+  -f max_files=1 -f crf=30 -f preset=6
 ```
 
-流程：解析最新 runner → 拉取 Docker Hub linuxserver/ffmpeg:latest → 安装 rclone → 列出 ffmpeg → 在同一个 action job 中逐文件下载/编码/验证 → 回传 ffmpeg-output → 读回校验 → Artifact 备份。没有下载源视频到 Artifact 再供另一 job 获取的中间步骤。
-下载时配置在 RUNNER_TEMP，编码子进程移除 OneDrive/rclone 凭据环境变量；FFmpeg 容器没有网络访问权限。
-下载采用 rclone 自带传输校验，另核对大小和远端修改时间；不是声明所有 OneDrive 文件均有 SHA-256。
+验收：
 
-## 6. 回传与验收
+1. `runner-image` 和 `action` 成功，实际编码发生在 GitHub runner。
+2. OneDrive `ffmpeg-output/<run_id>-<attempt>-<随机后缀>/0001/output_av1.mp4` 存在，报告同目录可见。
+3. 报告 Artifact 的 `batch.json` 含正确 `source_name`、`output_remote`，`upload_verified: true`，成功/失败数量符合预期。
+4. 单文件报告验证 AV1、原始位深、分辨率、SAR、帧数、音轨、时长及完整解码；观看成品确认主观画质。
+5. Artifact 备份到期为 3 天；OneDrive 成品不受此 Artifact 保留期影响，工作流不自动清理它们。
 
-- OneDrive 成品位置：`ffmpeg-output/<run_id>-<attempt>-<随机后缀>/<文件编号>/output_av1.mp4`，同目录有单文件报告。
-- 不覆盖已有成品，不创建公开分享链接。上传使用 immutable，随后 check --download 验证远端字节。
-- batch.json 记录源文件名、output_remote、upload_verified；只有回传校验通过才计为成功。
-- 上传失败可能留下不完整批次；保留现有结果用于排查，不自动清空远端目录。
+上传使用 `--immutable`，回传后 `check --download` 比对实际字节；失败不报告整条流程成功。失败可能留下部分输出目录，不自动删除，避免误删可用结果。
 
-- MP4 Artifact：只包含已通过验证的 `output_av1.mp4`，按数字目录区分。
-- 报告 Artifact：`batch.json`/`batch.md`、各文件报告、编码日志、镜像和 runner 信息。
-- 核对所有预期文件是否出现在 batch.json，成功/失败数是否正确。
-- 核对源位深、尺寸、帧数、音轨和完整解码验证；这些不等于主观画质验收。
-- 核对 Artifact 到期时间为 3 天。
-- 首次 OneDrive OAuth/下载/编码只有在真实云端运行成功后才算端到端部署完成；mock 测试不能替代此验收。
+## 10. 故障、凭据维护和撤销
 
-## 7. 授权维护与故障
+| 现象 | 操作 |
+|---|---|
+| Entra 提示账户不在 Microsoft Services 租户 | 使用 rclone 内置应用的授权链接，不继续应用注册流程 |
+| 登录页空白或超时 | 保持 rclone 运行，在同机浏览器打开它本次生成的地址；仍失败检查网络，进程退出后需重新生成链接 |
+| 本地回调连接失败 | 检查 53682 端口和本机防火墙；不能在另一台电脑访问本机 localhost |
+| `ObjectHandle is Invalid` / 网盘类型错误 | 核对 Microsoft 账户和个人 drive 选择；用 config 编辑正确网盘，已有有效个人 drive_id 时保留，不盲选列表第一项 |
+| 文件夹不存在 | 确认根目录名称准确为 ffmpeg，root_folder_id 为空，不是共享快捷方式 |
+| 能下载但上传 403 / accessDenied | 检查 Files.ReadWrite，重新浏览器授权、更新 Secret，不能只改 scopes 文本 |
+| 配置验证失败 | 确保仅含 od，type=onedrive、明确三个 scopes、token/drive_id 非空，不设自定义认证 URL |
+| TLS/传输超时 | 先查网络与代理；可在同一 rclone 命令增加 --disable-http2 排查，不能由一次成功断言一定是 HTTP/2 原因 |
+| gh 上传或触发无权限 | 检查 gh auth status、仓库名称和登录账户权限；不打印 gh auth token |
+| 超过 max_files | 移走不需处理的源视频或明确提高上限；这不是抽样数量 |
+| 工作流失败但有成品 Artifact | 编码可能已完成，回传或校验失败；查看 batch.json，不能只凭 Artifact 判断回传成功 |
+| 授权撤销或令牌失效 | 按第 6 节 reconnect 后重新上传 Secret |
 
-- Client Secret 到期：创建新 Value，在本地 rclone 配置中更新后重新授权并重新上传专用配置。
-- 用户令牌失效：运行 `rclone --config /home/user/.config/rclone/ffmpeg-onedrive.conf config reconnect od:`，再执行下列命令更新 Secret。
-- rclone 下载错误原文不会公开上传，以免 OAuth 异常泄露敏感信息；需要在自己的本地终端诊断具体错误。
-- 找不到目录：确认是网盘根目录 `ffmpeg`，remote 未设置 root_folder_id；不要填本地路径或分享链接。
-- 文件超限：单文件 <2 GiB；数量超过 max_files 会拒绝整批。不得期待 350 分钟 job 能处理任意数量/大小的视频。
-- 部分视频失败：先查看对应数字目录的报告，HDR/字幕/非 AAC 音频等仍属于不支持范围。
+访问令牌可由 rclone 自动刷新，但 runner 临时配置销毁后，更新过的刷新令牌不会写回 GitHub Secret。没有固定的“永远有效”期限；需要时重新授权和上传，见 [Microsoft 刷新令牌说明](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens)。内置应用方案没有自己创建的 Client Secret，不需要维护自建密钥到期日。
 
-```bash
-gh secret set ONEDRIVE_RCLONE_CONFIG --repo Grinch27/ffmpeg-compiler \
-  < /home/user/.config/rclone/ffmpeg-onedrive.conf
-```
+不再使用时：在 Microsoft 账户的应用访问/授权管理中撤销对应 rclone 应用访问，再删除仓库 `ONEDRIVE_RCLONE_CONFIG` Secret，并按自己的保管策略清理本机专用配置。仅删除 GitHub Secret 不会撤销已经签发的微软令牌；撤销共享 rclone 应用授权可能影响同账户其他 rclone 连接。
 
-配置刷新不会自动持久化到 GitHub Secret，也未授予工作流修改 Secrets 的高权限令牌。
-参考：https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens
+本机配置权限 600；配置不进 Git、不进 Artifact、不传入编码容器。公开日志避免使用 `rclone config show`、`--dump auth`、打印环境变量或 OAuth 错误原文。即使 GitHub 会掩码 Secret，也不应依赖掩码去公开完整配置。

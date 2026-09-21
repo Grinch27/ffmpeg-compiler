@@ -1,6 +1,6 @@
-# 冻结基线：2026-09-22；冻结当前功能与默认参数，后续功能变更需另行明确提出。
-# 已验证源码：16ca204895bca288120952fe7b8f7a20bb1f855c。
-# 云端验收：https://github.com/Grinch27/ffmpeg-compiler/actions/runs/35616764844（成功）。
+# 当前基线：2026-09-22；按用户要求仅保留 OneDrive 路线，参数和回传行为沿用已验证版本。
+# OneDrive 路线历史已验证源码：16ca204895bca288120952fe7b8f7a20bb1f855c。
+# 历史云端验收（分支简化后尚未重跑）：https://github.com/Grinch27/ffmpeg-compiler/actions/runs/35616764844（成功）。
 # 基线参数：CRF=30、preset=6、编码线程=4；MP4 AV1，按源选择 8/10-bit。
 # 数据路径：OneDrive ffmpeg → action 内下载/编码/解码验证 → ffmpeg-output → 回传字节校验。
 # Artifact 仅备份成品及报告，保留 3 天，不作为 job 间源视频中转。
@@ -15,18 +15,6 @@ name: Compress Video to AV1 MP4
 on:
   workflow_dispatch:
     inputs:
-      source_type:
-        description: "Input source (OneDrive reads direct video files in root/ffmpeg)"
-        required: true
-        default: onedrive
-        type: choice
-        options:
-          - onedrive
-          - release
-      asset_id:
-        description: "Source Release asset ID in this repository"
-        required: false
-        type: string
       max_files:
         description: "OneDrive safety limit (1-100); fail before downloading if exceeded"
         default: "10"
@@ -40,7 +28,7 @@ on:
         default: "6"
         type: string
 
-run-name: AV1 MP4 - ${{ inputs.source_type }} - CRF ${{ inputs.crf }}
+run-name: AV1 MP4 - OneDrive - CRF ${{ inputs.crf }}
 permissions:
   contents: read
 
@@ -106,53 +94,7 @@ jobs:
             head -n 1 runtime/ffmpeg-version.log
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Download Release asset
-        if: ${{ inputs.source_type == 'release' }}
-        timeout-minutes: 350
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ASSET_ID: ${{ inputs.asset_id }}
-        run: |
-          set -euo pipefail
-          [[ "$ASSET_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid asset ID'; exit 1; }
-          mkdir -p input
-          gh api "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" > input/asset.json
-          python3 - <<'PY'
-          import json, shutil
-          asset = json.load(open('input/asset.json'))
-          size = asset['size']
-          if not 0 < size < 2 * 1024**3:
-              raise SystemExit('Input must be nonempty and smaller than 2 GiB')
-          if shutil.disk_usage('.').free < size * 4:
-              raise SystemExit('Insufficient free disk space')
-          PY
-          gh api -H 'Accept: application/octet-stream' \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" > input/source.mp4
-          python3 - <<'PY'
-          import hashlib, json, pathlib
-          asset = json.load(open('input/asset.json'))
-          source = pathlib.Path('input/source.mp4')
-          if source.stat().st_size != asset['size']:
-              raise SystemExit('Downloaded size mismatch')
-          digest = asset.get('digest')
-          if digest and digest.startswith('sha256:'):
-              with source.open('rb') as stream:
-                  actual = 'sha256:' + hashlib.file_digest(stream, 'sha256').hexdigest()
-              if actual != digest:
-                  raise SystemExit('Downloaded SHA-256 mismatch')
-          PY
-      - name: Encode and verify
-        if: ${{ inputs.source_type == 'release' }}
-        timeout-minutes: 350
-        env:
-          CRF: ${{ inputs.crf }}
-          PRESET: ${{ inputs.preset }}
-        run: |
-          python3 scripts/compress_av1.py input/source.mp4 \
-            --output-dir output --crf "$CRF" --preset "$PRESET" --threads 4
-
       - name: Install rclone for OneDrive
-        if: ${{ inputs.source_type == 'onedrive' }}
         timeout-minutes: 15
         run: |
           sudo apt-get update
@@ -160,7 +102,6 @@ jobs:
           rclone version > runtime/rclone-version.log
 
       - name: Download, encode, verify and return videos to OneDrive
-        if: ${{ inputs.source_type == 'onedrive' }}
         timeout-minutes: 310
         env:
           ONEDRIVE_RCLONE_CONFIG: ${{ secrets.ONEDRIVE_RCLONE_CONFIG }}
@@ -171,18 +112,8 @@ jobs:
           python3 scripts/onedrive_batch.py \
             --crf "$CRF" --preset "$PRESET" --max-files "$MAX_FILES"
 
-      - name: Upload completed video
-        if: ${{ success() && inputs.source_type == 'release' }}
-        uses: actions/upload-artifact@main
-        with:
-          name: av1-mp4-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/output_av1.mp4
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 3
-
       - name: Upload completed OneDrive videos
-        if: ${{ !cancelled() && inputs.source_type == 'onedrive' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@main
         with:
           name: av1-mp4-${{ github.run_id }}-${{ github.run_attempt }}

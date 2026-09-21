@@ -2,10 +2,10 @@
 
 ## 用户视频 → AV1 MP4
 
-OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。默认来源 `onedrive`，在 action job 内逐个下载、压缩 `od:ffmpeg` 直接子视频文件，并回传 `od:ffmpeg-output/<run_id>-<attempt>-<随机后缀>/`，不使用 Artifact 中转；本地授权入口 `bash scripts/connect_onedrive.sh`。需要先由本人完成微软浏览器授权并设置专用 Secret。
+OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。唯一来源为 OneDrive，在 action job 内逐个下载、压缩 `od:ffmpeg` 直接子视频文件，并回传 `od:ffmpeg-output/<run_id>-<attempt>-<随机后缀>/`，不使用 Artifact 中转；本地授权入口 `bash scripts/connect_onedrive.sh`。需要先由本人完成微软浏览器授权并设置专用 Secret。
 
-独立工作流 `.github/workflows/compress-av1.yml` 支持 **OneDrive 根目录 ffmpeg 批处理**和**本仓库 Release 附件 ID**，
-输出 AV1 MP4（随原视频保持 8/10-bit）、压缩报告和日志，不重复编译 FFmpeg，不自动发布成品 Release。
+独立工作流 `.github/workflows/compress-av1.yml` 仅支持 **OneDrive 根目录 ffmpeg 批处理**，
+输出 AV1 MP4（随原视频保持 8/10-bit）、压缩报告和日志，不重复编译 FFmpeg。
 参考 U-Boot All in One 的 `runner-image → action` 结构，不引入 toolchain。
 `runner-image` 在 `ubuntu-latest` 上调用 `Grinch27/github-actions/.github/actions/resolve-runner-image@main`，
 从 GitHub 官方 runner 列表选取最高版本 Ubuntu x64 标签；解析失败时该 Action 回退到 `ubuntu-latest`。
@@ -18,19 +18,18 @@ OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。�
 ### 测试输入
 
 - 当前输入：OneDrive 根目录 `ffmpeg/110594-1080p.mp4`；19,439,290 字节。
-- 旧 Release 测试视频附件已按用户要求删除，不再使用旧附件 ID。
 - 约 90 秒、1502×1080、30 fps、H.264 + AAC；SAR `31279:30892`，不能强制改为方形像素。
 
 ### 运行与下载
 
 1. 工作流部署到默认分支后，进入 Actions → Compress Video to AV1 MP4 → Run workflow。
-2. OneDrive 选择 `source_type=onedrive`；Release 模式需另行提供存在的附件 ID。建议先用 `crf=30`、`preset=6`。
+2. 填写 `max_files`、`crf`、`preset`，建议先用 `crf=30`、`preset=6`。
 3. OneDrive 成品和单文件报告直接回传 ffmpeg-output 的独立运行目录，读回校验通过后才报告成功。也可从运行页面下载 `av1-mp4-<run_id>-<attempt>` 和 `av1-report-<run_id>-<attempt>`。
 4. Summary 展示体积、节省比例、编码耗时和验证结果；成品、报告和日志 Artifact 均保存 3 天。
-   此设置适用于后续上传，不会修改既有 Artifact 的到期时间，也不改变输入 Release 附件的保留期限。
+   此设置适用于后续上传，不会修改既有 Artifact 的到期时间。
 
-后续输入先上传到本仓库 Release，再读取附件 ID。Actions 表单没有文件上传控件。
-下载按本仓库附件 ID 定位，凭据只传给下载步骤，不接受任意脚本或 URL。
+后续输入直接上传到 OneDrive 根目录 `ffmpeg`。工作流从该目录下载，完成后回传根目录 `ffmpeg-output`。
+授权使用 rclone 内置应用；需 `Files.ReadWrite offline_access User.Read`，详见部署指南。
 
 ### 支持范围和质量边界
 
