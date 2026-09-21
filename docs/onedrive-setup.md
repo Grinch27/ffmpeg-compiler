@@ -7,7 +7,7 @@
 - 首版每次最多 10 个视频；可在表单调整 max_files（1–100）。超限会整体拒绝，不会静默只取前几个。
 - 单文件必须非空且小于 2 GiB；根据扩展名筛选视频，编码器仍会拒绝不支持的媒体内容。
 - CRF 30、preset 6、lp=4，源 8/10-bit，AAC 复制；不支持 HDR/字幕/非 AAC 音轨等既有边界保持不变。
-- 源 OneDrive 不写入、不删除；本地临时下载副本会自动清理。每次重新运行都会重新处理文件，不会标记“已处理”。
+- 源目录 ffmpeg 不写入、不删除；成品写入 ffmpeg-output；本地临时下载副本会自动清理。每次重新运行都会重新处理文件，不会标记“已处理”。
 - 按文件名排序，结果目录为 `0001`、`0002` 等；`batch.json` 提供原文件名和结果目录的映射。
 - 某文件失败继续处理其余文件；已有成功 MP4 仍上传，整批有失败则任务标记失败。取消/强制超时可能来不及上传。
 - 成品和报告 Artifact 均保存 3 天。下载配置不在工作区、不传入编码子进程、不上传 Artifact。
@@ -19,27 +19,13 @@
 例如 `ffmpeg/110594-1080p.mp4`。等上传完成后再测试。
 目录限制只是程序行为，不是微软服务端的文件夹级授权隔离。
 
-## 2. 创建自己的 Microsoft 应用和客户端密钥
+## 2. 使用 rclone 内置 Microsoft 应用
 
-这是 OAuth 应用凭据，不是单独粘贴一个“API Key”就能访问个人 OneDrive。
-除 Client ID/Client Secret 外，还必须由你在浏览器登录个人账户并同意授权，获得用户令牌。
-
-1. 打开 https://entra.microsoft.com/ 或 https://portal.azure.com/。
-2. 进入 Microsoft Entra ID → App registrations（应用注册）→ New registration（新注册）。
-3. 名称填 `ffmpeg-onedrive-rclone`。
-4. 支持账户类型选择“任何组织目录中的账户和个人 Microsoft 账户”。不要选择仅组织单租户。
-5. Redirect URI 平台选择 **Web**，地址填写 **`http://localhost:53682/`**，保留结尾斜杠。
-6. 注册后记录 **Application (client) ID**。它不是 Directory (tenant) ID，也不是 Object ID。
-7. 进入 Certificates & secrets → Client secrets → New client secret。
-8. 按需要设置有效期，创建后把 **Value（值）** 保存在自己的密码管理器。不要复制 Secret ID 代替 Value。
-9. 进入 API permissions → Add a permission → Microsoft Graph → **Delegated permissions（委托权限）**。
-10. 为自己的网盘读取场景配置 `Files.Read`、`offline_access`、`User.Read`，不添加 Files.ReadWrite 或应用级 Files.Read.All。
-11. 若应用不能注册、缺少 Entra 租户权限或门户要求额外开户/付费，停止在该页面继续操作并反馈错误名称；不要为了打通下载贸然开通付费资源。
-
-参考：
-- https://rclone.org/onedrive/#getting-your-own-client-id-and-key
-- https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app
-- https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0
+无需自行注册 Entra 应用或客户端密钥。client_id、client_secret 留空。
+必须在浏览器授权 `Files.ReadWrite offline_access User.Read`，回传需要写入权限。
+如果之前只有 Files.Read，仅修改配置字符串不会升级令牌；必须重新浏览器授权。
+Files.ReadWrite 覆盖账户文件，源目录只读和仅写 ffmpeg-output 由代码约束，不是服务端文件夹级隔离。
+参考：https://rclone.org/onedrive/
 
 ## 3. 在自己的本地终端完成 rclone 授权
 
@@ -63,11 +49,11 @@ bash /home/user/github/ffmpeg-compiler/scripts/connect_onedrive.sh
 | New remote | n |
 | name | od |
 | Storage | onedrive |
-| client_id | 第 2 步 Application (client) ID |
-| client_secret | 第 2 步客户端密钥 Value |
+| client_id | 留空（内置应用） |
+| client_secret | 留空（内置应用） |
 | region | Global（普通国际版个人账户） |
 | Edit advanced config | y |
-| access_scopes | Files.Read offline_access User.Read |
+| access_scopes | Files.ReadWrite offline_access User.Read |
 | root_folder_id | 留空 |
 | 其他高级参数 | 未有明确需要时保留默认 |
 | Use web browser | y |
@@ -75,8 +61,7 @@ bash /home/user/github/ffmpeg-compiler/scripts/connect_onedrive.sh
 | 网盘选择 | 自己的个人网盘，确认根目录 |
 | 保存 remote | y，然后退出配置菜单 |
 
-浏览器中登录目标个人 Microsoft 账户，检查应用名和只读授权后同意。
-若授权页请求写入权限，返回配置检查 access_scopes，不要直接继续。
+浏览器中登录目标个人 Microsoft 账户，检查应用名及文件读写权限后同意；这次写入权限用于回传成品。
 不要为这份专用配置设置额外的 rclone 配置加密密码，当前工作流只接收独立明文配置并由 GitHub Secrets 加密保存。
 
 脚本会在本地验证配置和 `od:ffmpeg` 可达性，然后上传仓库 Secret：`ONEDRIVE_RCLONE_CONFIG`。
@@ -113,11 +98,16 @@ gh workflow run compress-av1.yml --repo Grinch27/ffmpeg-compiler --ref main \
   -f source_type=onedrive -f max_files=10 -f crf=30 -f preset=6
 ```
 
-流程：解析最新 runner → 拉取 Docker Hub linuxserver/ffmpeg:latest → 安装 rclone → 列出 ffmpeg → 逐文件下载/编码/验证 → 上传 Artifact。
+流程：解析最新 runner → 拉取 Docker Hub linuxserver/ffmpeg:latest → 安装 rclone → 列出 ffmpeg → 在同一个 action job 中逐文件下载/编码/验证 → 回传 ffmpeg-output → 读回校验 → Artifact 备份。没有下载源视频到 Artifact 再供另一 job 获取的中间步骤。
 下载时配置在 RUNNER_TEMP，编码子进程移除 OneDrive/rclone 凭据环境变量；FFmpeg 容器没有网络访问权限。
 下载采用 rclone 自带传输校验，另核对大小和远端修改时间；不是声明所有 OneDrive 文件均有 SHA-256。
 
-## 6. 下载与验收
+## 6. 回传与验收
+
+- OneDrive 成品位置：`ffmpeg-output/<run_id>-<attempt>-<随机后缀>/<文件编号>/output_av1.mp4`，同目录有单文件报告。
+- 不覆盖已有成品，不创建公开分享链接。上传使用 immutable，随后 check --download 验证远端字节。
+- batch.json 记录源文件名、output_remote、upload_verified；只有回传校验通过才计为成功。
+- 上传失败可能留下不完整批次；保留现有结果用于排查，不自动清空远端目录。
 
 - MP4 Artifact：只包含已通过验证的 `output_av1.mp4`，按数字目录区分。
 - 报告 Artifact：`batch.json`/`batch.md`、各文件报告、编码日志、镜像和 runner 信息。

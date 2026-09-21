@@ -2,7 +2,7 @@
 
 ## 用户视频 → AV1 MP4
 
-OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。默认来源 `onedrive`，逐个处理 `od:ffmpeg` 直接子视频文件；本地授权入口 `bash scripts/connect_onedrive.sh`。需要先由本人完成微软浏览器授权并设置专用 Secret。
+OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。默认来源 `onedrive`，在 action job 内逐个下载、压缩 `od:ffmpeg` 直接子视频文件，并回传 `od:ffmpeg-output/<run_id>-<attempt>-<随机后缀>/`，不使用 Artifact 中转；本地授权入口 `bash scripts/connect_onedrive.sh`。需要先由本人完成微软浏览器授权并设置专用 Secret。
 
 独立工作流 `.github/workflows/compress-av1.yml` 支持 **OneDrive 根目录 ffmpeg 批处理**和**本仓库 Release 附件 ID**，
 输出 AV1 MP4（随原视频保持 8/10-bit）、压缩报告和日志，不重复编译 FFmpeg，不自动发布成品 Release。
@@ -15,18 +15,17 @@ OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。�
 镜像是 LinuxServer.io 维护的第三方构建。报告包含 image ID、RepoDigests、FFmpeg 和 SVT-AV1 版本。
 容器内只执行媒体命令，Python 留在 runner；无需镜像预装 Python。输入只读挂载，输出单独可写，编码容器禁用网络。
 
-### 已上传的测试输入
+### 测试输入
 
-- Release: https://github.com/Grinch27/ffmpeg-compiler/releases/tag/av1-test-110594-20260921
-- 文件：`110594-1080p.mp4`；附件 ID：`577680438`；大小：19,439,290 字节。
+- 当前输入：OneDrive 根目录 `ffmpeg/110594-1080p.mp4`；19,439,290 字节。
+- 旧 Release 测试视频附件已按用户要求删除，不再使用旧附件 ID。
 - 约 90 秒、1502×1080、30 fps、H.264 + AAC；SAR `31279:30892`，不能强制改为方形像素。
-- 该仓库公开，Release 原视频可公开下载。
 
 ### 运行与下载
 
 1. 工作流部署到默认分支后，进入 Actions → Compress Video to AV1 MP4 → Run workflow。
-2. Release 测试选择 `source_type=release`、`asset_id=577680438`；OneDrive 选择 `source_type=onedrive`。建议先用 `crf=30`、`preset=6`。
-3. 从运行页面下载 `av1-mp4-<run_id>-<attempt>` 和 `av1-report-<run_id>-<attempt>`。
+2. OneDrive 选择 `source_type=onedrive`；Release 模式需另行提供存在的附件 ID。建议先用 `crf=30`、`preset=6`。
+3. OneDrive 成品和单文件报告直接回传 ffmpeg-output 的独立运行目录，读回校验通过后才报告成功。也可从运行页面下载 `av1-mp4-<run_id>-<attempt>` 和 `av1-report-<run_id>-<attempt>`。
 4. Summary 展示体积、节省比例、编码耗时和验证结果；成品、报告和日志 Artifact 均保存 3 天。
    此设置适用于后续上传，不会修改既有 Artifact 的到期时间，也不改变输入 Release 附件的保留期限。
 

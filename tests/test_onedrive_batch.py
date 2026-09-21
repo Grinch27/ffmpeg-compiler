@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import onedrive_batch as batch
 
-CONFIG = '[od]\ntype = onedrive\naccess_scopes = Files.Read offline_access User.Read\ntoken = MOCK_SECRET\ndrive_id = mock\n'
+CONFIG = '[od]\ntype = onedrive\naccess_scopes = Files.ReadWrite offline_access User.Read\ntoken = MOCK_SECRET\ndrive_id = mock\n'
 
 
 def entry(name='sample.mp4'):
@@ -29,7 +29,7 @@ class BatchTests(unittest.TestCase):
 
     def test_config_constraints(self):
         batch.validate_config(CONFIG)
-        for bad in (CONFIG.replace('Files.Read ', 'Files.ReadWrite '), CONFIG+'root_folder_id = other\n', CONFIG+'[extra]\ntype = local\n'):
+        for bad in (CONFIG.replace('Files.ReadWrite ', 'Files.Read '), CONFIG+'root_folder_id = other\n', CONFIG+'[extra]\ntype = local\n', CONFIG+'token_url = https://example.com\n'):
             with self.assertRaises(ValueError):
                 batch.validate_config(bad)
 
@@ -40,6 +40,7 @@ class BatchTests(unittest.TestCase):
             temporary = root / 'temp'; temporary.mkdir()
             previous = Path.cwd()
             configs = []
+            transfers = []
 
             def remote(config, *args):
                 configs.append(config)
@@ -47,6 +48,11 @@ class BatchTests(unittest.TestCase):
                 self.assertEqual(config.stat().st_mode & 0o777, 0o600)
                 if args[0] == 'copyto':
                     Path(args[2]).write_bytes(b'data')
+                    return ''
+                if args[0] in ('copy', 'check'):
+                    transfers.append(args)
+                    self.assertTrue(args[2].startswith('od:ffmpeg-output/'))
+                    self.assertTrue(args[2].endswith('/0002'))
                     return ''
                 if '--stat' in args:
                     return json.dumps(entry(args[1].split('/')[-1]))
@@ -73,6 +79,10 @@ class BatchTests(unittest.TestCase):
                 self.assertFalse(any(p.exists() for p in configs))
                 self.assertEqual(list(workspace.glob('onedrive-input-*')), [])
                 self.assertNotIn('MOCK_SECRET', (workspace/'output/batch.json').read_text())
+                self.assertEqual([a[0] for a in transfers], ['copy', 'check'])
+                self.assertIn('--immutable', transfers[0])
+                self.assertIn('--download', transfers[1])
+                self.assertTrue(result['files'][1]['upload_verified'])
             finally:
                 os.chdir(previous)
 
@@ -82,6 +92,40 @@ class BatchTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'check authorization') as error:
                 batch.remote_call(Path('/tmp/config'), 'lsjson', 'od:ffmpeg')
         self.assertNotIn('PRIVATE', str(error.exception))
+
+    def test_upload_verification_failure_is_not_success(self):
+        with tempfile.TemporaryDirectory() as base:
+            root = Path(base)
+            workspace = root / 'workspace'; workspace.mkdir()
+            temporary = root / 'temp'; temporary.mkdir()
+            previous = Path.cwd()
+
+            def remote(config, *args):
+                if args[0] == 'copyto':
+                    Path(args[2]).write_bytes(b'data')
+                    return ''
+                if args[0] == 'copy':
+                    return ''
+                if args[0] == 'check':
+                    raise RuntimeError('Remote byte verification failed')
+                return json.dumps(entry() if '--stat' in args else [entry()])
+
+            def encode(command, env):
+                dest = Path(command[command.index('--output-dir') + 1]); dest.mkdir()
+                (dest/'output_av1.mp4').write_bytes(b'av1')
+                (dest/'report.json').write_text(json.dumps({'status':'success','output_bytes':3,'saved_percent':25,'encode_seconds':1}))
+                return type('Result', (), {'returncode': 0})()
+
+            try:
+                os.chdir(workspace)
+                with patch.dict(os.environ, {'ONEDRIVE_RCLONE_CONFIG': CONFIG, 'RUNNER_TEMP': str(temporary)}, clear=True), patch.object(sys, 'argv', ['batch']), patch.object(batch, 'remote_call', remote), patch.object(batch.subprocess, 'run', encode), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(batch.main(), 1)
+                result = json.loads((workspace/'output/batch.json').read_text())
+                self.assertEqual(result['success_count'], 0)
+                self.assertFalse(result['files'][0]['upload_verified'])
+                self.assertEqual(list(temporary.iterdir()), [])
+            finally:
+                os.chdir(previous)
 
 
 if __name__ == '__main__':

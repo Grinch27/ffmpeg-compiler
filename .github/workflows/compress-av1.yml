@@ -1,4 +1,4 @@
-# 关键需求：动态 runner → action；支持 Release 或只读批量处理 OneDrive 根目录 ffmpeg；Artifact 保留 3 天。
+# 关键需求：动态 runner → action；同一 job 下载、压缩、回传 OneDrive ffmpeg-output；无 Artifact 中转。
 # 待确认：最终主观画质；后续研究：HDR/字幕/非 AAC 音轨。
 # 风险：公开仓库的输入与产物可能公开；Actions 时长和存储受配额限制。
 # 优化：独立于 FFmpeg 编译流程；验证：下载边界、完整编码及解码、云端实跑。
@@ -151,7 +151,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y rclone
           rclone version > runtime/rclone-version.log
 
-      - name: Download and encode OneDrive ffmpeg folder
+      - name: Download, encode, verify and return videos to OneDrive
         if: ${{ inputs.source_type == 'onedrive' }}
         timeout-minutes: 310
         env:

@@ -1,0 +1,10 @@
+# 凭据只能保存在工作区外；这些规则不替代提交前检查。
+__pycache__/
+*.py[cod]
+.env
+.env.*
+rclone.conf
+ffmpeg-onedrive.conf
+output/
+runtime/
+input/

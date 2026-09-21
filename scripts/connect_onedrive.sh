@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 需求：用户在自己的交互终端完成 od 授权，验证只读配置后上传专用 GitHub Secret。
-# 待确认：个人账户 Entra 应用注册、浏览器授权及 ffmpeg 文件夹存在。
+# 需求：使用内置应用完成 od 读写授权，验证后上传专用 GitHub Secret。
+# 待确认：浏览器授权及 ffmpeg 文件夹存在；无需自行注册 Entra 应用。
 # 后续研究：令牌自动持久化；当前失效后重新授权并再次上传配置。
-# 风险：配置含凭据，权限 600；不得在录屏、共享日志或聊天中展示授权结果。
-# 验证重点：单个 od remote、只读 scopes、根目录 ffmpeg 可列出；不下载或压缩视频。
+# 风险：Files.ReadWrite 是账户级权限；配置含凭据，权限 600；不得展示授权结果。
+# 验证重点：单个 od remote、限定 scopes、根目录 ffmpeg 可列出；不下载或压缩视频。
 set -euo pipefail
 umask 077
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,8 +17,9 @@ fi
 command -v gh >/dev/null
 mkdir -p "$config_dir"
 printf '%s\n' 'Create a remote named od (type onedrive).' \
-  'Enter your client ID and client secret in the local rclone prompts.' \
-  'Advanced access_scopes MUST be: Files.Read offline_access User.Read' \
+  'Leave client ID and client secret blank to use the built-in Microsoft app.' \
+  'Advanced access_scopes MUST be: Files.ReadWrite offline_access User.Read' \
+  'Existing read-only remotes MUST reconnect in the browser to grant upload access.' \
   'Choose the drive root; leave root_folder_id empty. Do not encrypt this dedicated config.' \
   'After validation this script uploads ONEDRIVE_RCLONE_CONFIG to Grinch27/ffmpeg-compiler.'
 "$rclone_bin" --config "$config_file" config
@@ -32,7 +33,7 @@ try:
     validate_config(Path(sys.argv[2]).read_text())
 except Exception:
     raise SystemExit('Config validation failed. Check od/type/scopes/token/drive_id/root_folder_id locally; do not paste tokens into chat.')
-print('Read-only dedicated config validated')
+print('Dedicated read/write config validated')
 PY
 "$rclone_bin" --config "$config_file" lsjson od:ffmpeg --files-only --max-depth 1 |
   python3 -c 'import json,sys; print("ffmpeg folder reachable; direct files:",len(json.load(sys.stdin)))'

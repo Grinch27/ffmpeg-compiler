@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# 需求：只读下载 od:ffmpeg 的直接子视频文件，逐个调用现有云端编码器。
-# 待确认：真实 OAuth 授权和首次 OneDrive 云端运行；不递归子目录。
+# 需求：action job 直接下载 od:ffmpeg，编码验证后回传 ffmpeg-output；不用 Artifact 中转。
+# 待确认：写入授权和首次云端回传；不递归源目录、不覆盖历史成品。
 # 后续研究：刷新令牌持久化、大文件、HDR；优化：逐文件下载以减少磁盘占用。
 # 风险：配置含凭据，仅写 RUNNER_TEMP，不交给编码子进程，不记录 rclone 错误原文。
 # 验证：目录边界、非法文件名、文件变化、下载失败、部分成功、凭据清理。
@@ -13,9 +13,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 
 EXTENSIONS = {'.mp4', '.mkv', '.mov', '.m4v', '.webm', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg'}
 REMOTE = 'od:ffmpeg'
+OUTPUT_REMOTE = 'od:ffmpeg-output'
 
 
 def select_files(entries, max_files):
@@ -66,8 +68,10 @@ def validate_config(text):
     if config['od'].get('root_folder_id', '').strip():
         raise ValueError('root_folder_id must be empty: ffmpeg is relative to the drive root')
     scopes = set(config['od'].get('access_scopes', '').split())
-    if not scopes or not scopes <= {'Files.Read', 'offline_access', 'User.Read'} or 'Files.Read' not in scopes:
-        raise ValueError('Configure explicit read-only access_scopes: Files.Read offline_access User.Read')
+    if scopes != {'Files.ReadWrite', 'offline_access', 'User.Read'}:
+        raise ValueError('Configure access_scopes: Files.ReadWrite offline_access User.Read; reconnect to grant upload permission')
+    if any(config['od'].get(k, '').strip() for k in ('auth_url', 'token_url', 'client_credentials', 'link_scope')):
+        raise ValueError('Custom authentication endpoints and sharing options are not supported')
     if not config['od'].get('token') or not config['od'].get('drive_id'):
         raise ValueError('Complete browser authorization and drive selection before uploading the config')
 
@@ -82,6 +86,11 @@ def main():
     output.mkdir(exist_ok=False)
     rows = []
     batch_error = None
+    run = os.environ.get('GITHUB_RUN_ID', 'local')
+    attempt = os.environ.get('GITHUB_RUN_ATTEMPT', '1')
+    if not (run == 'local' or run.isdecimal()) or not attempt.isdecimal():
+        raise ValueError('Invalid run identity')
+    destination = f'{OUTPUT_REMOTE}/{run}-{attempt}-{uuid.uuid4().hex[:8]}'
     try:
         secret = os.environ.pop('ONEDRIVE_RCLONE_CONFIG', '')
         if not secret:
@@ -122,6 +131,15 @@ def main():
                         report = json.loads((output / key / 'report.json').read_text())
                         if report['status'] != 'success' or not (output / key / 'output_av1.mp4').is_file():
                             raise RuntimeError('Completed output is missing')
+                        # Each run has its own destination; never sync/delete or overwrite old output.
+                        target = f'{destination}/{key}'
+                        filters = ['--include', '/output_av1.mp4', '--include', '/report.json', '--include', '/report.md']
+                        row['output_remote'] = target + '/output_av1.mp4'
+                        row['upload_verified'] = False
+                        remote_call(config, 'copy', str(output / key), target, '--immutable', *filters)
+                        # Compare actual remote bytes, even when OneDrive has no compatible hash.
+                        remote_call(config, 'check', str(output / key), target, '--one-way', '--download', *filters)
+                        row['upload_verified'] = True
                         row.update(status='success', output_bytes=report['output_bytes'],
                                    saved_percent=report['saved_percent'], encode_seconds=report['encode_seconds'])
                 except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
@@ -134,14 +152,14 @@ def main():
             batch_error = 'Invalid rclone configuration format'
     finally:
         success = sum(r['status'] == 'success' for r in rows)
-        report = {'source': REMOTE, 'files': rows, 'success_count': success,
+        report = {'source': REMOTE, 'destination': destination, 'files': rows, 'success_count': success,
                   'failed_count': len(rows) - success, 'error': batch_error}
         (output / 'batch.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
-        lines = ['# OneDrive batch', '', f'- Successful: {success}', f'- Failed: {len(rows)-success}']
+        lines = ['# OneDrive batch', '', f'- Destination: `{destination}`', f'- Successful: {success}', f'- Failed: {len(rows)-success}']
         if batch_error:
             lines.append(f'- Error: {batch_error}')
         lines += ['', 'Source filenames and numeric output-folder mapping: see batch.json.',
-                  'Only validated MP4 files are uploaded; source files remain in OneDrive.']
+                  'Success requires encoding, decode validation, upload and byte verification; source files remain in OneDrive.']
         markdown = '\n'.join(lines) + '\n'
         (output / 'batch.md').write_text(markdown)
         if os.environ.get('GITHUB_STEP_SUMMARY'):
