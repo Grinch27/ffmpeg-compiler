@@ -4,8 +4,11 @@
 
 新增独立工作流 `.github/workflows/compress-av1.yml`，手动读取**本仓库 Release 附件 ID**，
 输出 AV1 MP4（随原视频保持 8/10-bit）、压缩报告和日志，不重复编译 FFmpeg，不自动发布成品 Release。
-参考 U-Boot All in One 的输入、执行、报告和产物阶段，使用普通 `ubuntu-24.04` runner
-和最小 `contents: read` 权限。每次从 Docker Hub 拉取 `linuxserver/ffmpeg:latest`，
+参考 U-Boot All in One 的 `runner-image → action` 结构，不引入 toolchain。
+`runner-image` 在 `ubuntu-latest` 上调用 `Grinch27/github-actions/.github/actions/resolve-runner-image@main`，
+从 GitHub 官方 runner 列表选取最高版本 Ubuntu x64 标签；解析失败时该 Action 回退到 `ubuntu-latest`。
+`action` 使用解析结果运行，系统镜像版本和 CPU 信息保存在 `runtime/runner.log`。
+权限保持最小 `contents: read`。每次从 Docker Hub 拉取 `linuxserver/ffmpeg:latest`，
 本次所有 ffmpeg/ffprobe 调用均固定使用刚拉取的 image ID，不使用 runner 的 APT FFmpeg。
 镜像是 LinuxServer.io 维护的第三方构建。报告包含 image ID、RepoDigests、FFmpeg 和 SVT-AV1 版本。
 容器内只执行媒体命令，Python 留在 runner；无需镜像预装 Python。输入只读挂载，输出单独可写，编码容器禁用网络。

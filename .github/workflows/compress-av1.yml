@@ -1,4 +1,4 @@
-# 关键需求：每次拉取 Docker Hub linuxserver/ffmpeg:latest，使用 Release 视频生成 AV1 MP4 和报告。
+# 关键需求：动态解析最新 Ubuntu x64 runner，不使用 toolchain；action 每次拉取 Docker Hub latest 并输出 AV1 MP4。
 # 待确认：最终主观画质；后续研究：HDR/字幕/非 AAC 音轨。
 # 风险：公开仓库的输入与产物可能公开；Actions 时长和存储受配额限制。
 # 优化：独立于 FFmpeg 编译流程；验证：下载边界、完整编码及解码、云端实跑。
@@ -29,13 +29,41 @@ defaults:
     shell: bash
 
 jobs:
-  compress:
-    runs-on: ubuntu-24.04
+  runner-image:
+    name: ubuntu-latest - runner-image
+    runs-on: ubuntu-latest
+    outputs:
+      RUNNER_IMAGE: ${{ steps.resolve-runner-image.outputs.RUNNER_IMAGE }}
+    steps:
+      - name: Resolve runner-image
+        id: resolve-runner-image
+        uses: Grinch27/github-actions/.github/actions/resolve-runner-image@main
+
+  action:
+    name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - linuxserver/ffmpeg:latest - action
+    needs: runner-image
+    runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Record runner environment
+        env:
+          RESOLVED_RUNNER: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
+        run: |
+          mkdir -p runtime
+          {
+            printf 'Runner label: %s\nImageOS: %s\nImageVersion: %s\n' \
+              "$RESOLVED_RUNNER" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            cat /etc/os-release
+            uname -a
+            lscpu
+          } > runtime/runner.log
+          {
+            printf '### Runner environment\n\n'
+            head -n 3 runtime/runner.log
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Pull latest FFmpeg from Docker Hub
         timeout-minutes: 15
         run: |
