@@ -8,16 +8,16 @@ on:
   workflow_dispatch:
     inputs:
       asset_id:
-        description: 'Source Release asset ID in this repository'
+        description: "Source Release asset ID in this repository"
         required: true
         type: string
       crf:
-        description: 'Quality: lower is better/larger (1-40)'
-        default: '30'
+        description: "Quality: lower is better/larger (1-40)"
+        default: "30"
         type: string
       preset:
-        description: 'Speed: lower is slower (4-9)'
-        default: '6'
+        description: "Speed: lower is slower (4-9)"
+        default: "6"
         type: string
 
 run-name: AV1 MP4 - asset ${{ inputs.asset_id }} - CRF ${{ inputs.crf }}
@@ -45,9 +45,10 @@ jobs:
     runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@main
         with:
           persist-credentials: false
+
       - name: Record runner environment
         env:
           RESOLVED_RUNNER: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
@@ -64,6 +65,7 @@ jobs:
             printf '### Runner environment\n\n'
             head -n 3 runtime/runner.log
           } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Pull latest FFmpeg from Docker Hub
         timeout-minutes: 15
         run: |
@@ -83,8 +85,9 @@ jobs:
             docker image inspect "$image_id" --format 'Repo digests: {{json .RepoDigests}}'
             head -n 1 runtime/ffmpeg-version.log
           } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Download Release asset
-        timeout-minutes: 15
+        timeout-minutes: 350
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET_ID: ${{ inputs.asset_id }}
@@ -118,24 +121,26 @@ jobs:
                   raise SystemExit('Downloaded SHA-256 mismatch')
           PY
       - name: Encode and verify
-        timeout-minutes: 310
+        timeout-minutes: 350
         env:
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
         run: |
           python3 scripts/compress_av1.py input/source.mp4 \
             --output-dir output --crf "$CRF" --preset "$PRESET" --threads 4
+
       - name: Upload completed video
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@main
         with:
           name: av1-mp4-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/output_av1.mp4
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+
       - name: Upload reports and logs
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@main
         with:
           name: av1-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
