@@ -29,8 +29,7 @@ on:
         type: string
 
 run-name: AV1 MP4 - OneDrive - CRF ${{ inputs.crf }}
-permissions:
-  contents: read
+permissions: write-all
 
 defaults:
   run:
@@ -51,7 +50,6 @@ jobs:
     name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - linuxserver/ffmpeg:latest - action
     needs: runner-image
     runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
-    timeout-minutes: 350
     steps:
       - uses: actions/checkout@main
         with:
@@ -75,7 +73,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Pull latest FFmpeg from Docker Hub
-        timeout-minutes: 15
         run: |
           set -euo pipefail
           mkdir -p runtime
@@ -95,14 +92,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install rclone for OneDrive
-        timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y rclone
           rclone version > runtime/rclone-version.log
 
       - name: Download, encode, verify and return videos to OneDrive
-        timeout-minutes: 310
         env:
           ONEDRIVE_RCLONE_CONFIG: ${{ secrets.ONEDRIVE_RCLONE_CONFIG }}
           CRF: ${{ inputs.crf }}
