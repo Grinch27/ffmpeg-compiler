@@ -9,8 +9,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  runner-image:
+    name: ubuntu-latest - runner-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      RUNNER_IMAGE: ${{ steps.resolve-runner-image.outputs.RUNNER_IMAGE }}
+    steps:
+      - name: Resolve runner-image
+        id: resolve-runner-image
+        uses: Grinch27/github-actions/.github/actions/resolve-runner-image@main
+
   ffmpeg:
     name: ${{ matrix.workflows_inputs.ffmpeg_branch }}
+    needs: runner-image
     uses: ./.github/workflows/build-ffmpeg_indocker_dev.yml
     strategy:
       fail-fast: false
@@ -20,6 +33,7 @@ jobs:
             repo_url: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
             test_seconds: "8"
     with:
+      runner_image: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
       repo_url: ${{ matrix.workflows_inputs.repo_url }}
       ffmpeg_branch: ${{ matrix.workflows_inputs.ffmpeg_branch }}
       test_seconds: ${{ matrix.workflows_inputs.test_seconds }}
