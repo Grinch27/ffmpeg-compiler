@@ -9,12 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  runner-image:
+    name: ubuntu-latest - runner-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      RUNNER_IMAGE: ${{ steps.resolve-runner-image.outputs.RUNNER_IMAGE }}
+    steps:
+      - name: Resolve runner-image
+        id: resolve-runner-image
+        uses: Grinch27/github-actions/.github/actions/resolve-runner-image@main
+
   test_build_ffmpeg_dev:
     name: Test build-ffmpeg_dev.yml
+    needs: runner-image
     uses: ./.github/workflows/build-ffmpeg_dev.yml
     permissions:
       contents: read
     with:
+      runner_image: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
       repo_url: https://git.ffmpeg.org/gitweb/ffmpeg.git
       ffmpeg_branch: master
       test_seconds: "8"
@@ -24,10 +38,12 @@ jobs:
 
   test_build_ffmpeg_indocker_dev:
     name: Test build-ffmpeg_indocker_dev.yml
+    needs: runner-image
     uses: ./.github/workflows/build-ffmpeg_indocker_dev.yml
     permissions:
       contents: read
     with:
+      runner_image: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
       repo_url: https://git.ffmpeg.org/gitweb/ffmpeg.git
       ffmpeg_branch: master
       test_seconds: "8"
