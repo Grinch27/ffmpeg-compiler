@@ -1,0 +1,62 @@
+# 需求：对私有 Release 执行短片段 AV1 benchmark，不改变既有 OneDrive 流程。
+# 待确认：Secret readonly 的配置及源文件具体视频格式。
+# 风险：公开仓库 Actions 日志可见，不上传媒体、详细日志和原文件校验哈希。
+# 验证：分片及原始 SHA-256、FFmpeg 解码、SVT-AV1、SSIM/VMAF、编码体积和时长。
+name: Private Release AV1 Benchmark
+
+on:
+  push:
+    branches:
+      - av1-gh-cache-benchmark-20261024
+    paths:
+      - .github/workflows/gh-cache-av1-benchmark.yml
+      - scripts/benchmark_release_av1.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-release-av1-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  runner-image:
+    name: ubuntu-latest - runner-image
+    runs-on: ubuntu-latest
+    outputs:
+      RUNNER_IMAGE: ${{ steps.resolve-runner-image.outputs.RUNNER_IMAGE }}
+    steps:
+      - name: Resolve runner-image
+        id: resolve-runner-image
+        uses: Grinch27/github-actions/.github/actions/resolve-runner-image@main
+
+  benchmark:
+    name: Verify private release and benchmark AV1 clips
+    needs: runner-image
+    if: github.repository == 'Grinch27/ffmpeg-compiler'
+    runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@main
+        with:
+          persist-credentials: false
+
+      - name: Compile-check benchmark script
+        run: python3 -m py_compile scripts/benchmark_release_av1.py
+
+      - name: Pull and pin FFmpeg container
+        run: |
+          set -euo pipefail
+          docker pull docker.io/linuxserver/ffmpeg:latest
+          image_id="$(docker image inspect docker.io/linuxserver/ffmpeg:latest --format '{{.Id}}')"
+          printf 'FF_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
+
+      - name: Private download, SHA-256 verify and sample benchmarks
+        env:
+          GH_TOKEN: ${{ secrets.readonly || secrets.GH_CACHE_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 scripts/benchmark_release_av1.py
+
+      # No actions/upload-artifact, external upload, or GitHub Release.
