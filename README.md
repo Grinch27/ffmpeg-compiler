@@ -4,7 +4,7 @@
 
 ## Release AV1 参数测试
 
-使用 `.github/workflows/gh-cache-av1-benchmark.yml`，只输入默认留空的 `release_url`。在原视频 12%、50%、82% 处各取 6 秒，比较 CRF 24/30/36 × preset 6/8，共 18 个样本；记录体积、编码耗时、SSIM 和可用时的 VMAF，完整解码各样本后即清理。报告使用 `av1-benchmark-<run_id>-<attempt>` 唯一文件名回传原 Release，逐个检查上传大小和 GitHub SHA-256；不上传视频样本，不使用公开 Artifact。片段分数不代表全片码率预测，也不能独自判定最优参数。下载复用分片流式合并，仅要求原片大小加 1 GB 可用磁盘；全片转码仍使用下面的独立工作流及其空间要求。
+使用 `.github/workflows/compress-av1_ghrelease.yml`，选择 `mode=benchmark`，输入默认留空的 `release_url`。在原视频 12%、50%、82% 处各取 6 秒，比较 CRF 24/30/36 × preset 6/8，共 18 个样本；记录体积、编码耗时、SSIM 和可用时的 VMAF，完整解码各样本后即清理。报告使用 `av1-benchmark-<run_id>-<attempt>` 唯一文件名回传原 Release，逐个检查上传大小和 GitHub SHA-256；不上传视频样本，不使用公开 Artifact。片段分数不代表全片码率预测，也不能独自判定最优参数。下载复用分片流式合并，仅要求原片大小加 1 GB 可用磁盘；全片转码选择同一工作流的 `mode=compress`，其空间要求见下文。
 
 ## GitHub Release 视频 → AV1 → 原 Release
 
@@ -12,12 +12,13 @@
 
 在本仓库 Actions Secrets 中配置 `readonly`（源仓库 Contents: Read-only）和 `writeonly`（源仓库 Contents: Read and write）。下载和上传分别使用对应 Secret，编码子进程不接收这两个令牌。PAT 的显示名称不会自动创建 Secret。
 
-运行时只填三个输入：
+同一个入口支持两种操作：`mode=compress`（默认）执行全片压缩，`mode=benchmark` 比较短片段；CRF/preset 输入仅用于全片压缩。
 
 | 输入 | 默认值 | 用途 |
 | --- | --- | --- |
 | `release_url` | 空，运行时必填 | `https://github.com/OWNER/REPO/releases/tag/TAG` |
-| `crf` | `30` | 画质/体积；支持 1–40 |
+| `mode` | `compress` | 全片压缩；`benchmark` 比较三处短片段 |
+| `crf` | `30` | 全片画质/体积；支持 1–40 |
 | `preset` | `6` | 速度；支持 4–9 |
 
 Release 须已发布、允许追加附件，只包含一个源视频或一组 `视频扩展名.part001` 起的连续原始字节分片；忽略本工作流产生的 `av1-result-` 附件和非视频文件。源附件须有 GitHub SHA-256 digest，分片输入另须有单行 `ORIGINAL_SHA256SUMS`。下载按序直接追加到一个临时输入文件，检查每个附件的大小/哈希及合并后原文件哈希，不同时保留全部分片。`manifest.json` 和原说明不执行为代码。
@@ -36,7 +37,7 @@ OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。�
 `runner-image` 在 `ubuntu-latest` 上调用 `Grinch27/github-actions/.github/actions/resolve-runner-image@main`，
 从 GitHub 官方 runner 列表选取最高版本 Ubuntu x64 标签；解析失败时该 Action 回退到 `ubuntu-latest`。
 `action` 使用解析结果运行，系统镜像版本和 CPU 信息保存在 `runtime/runner.log`。
-权限保持最小 `contents: read`。每次从 Docker Hub 拉取 `linuxserver/ffmpeg:latest`，
+工作流沿用现有 `permissions: write-all`。每次从 Docker Hub 拉取 `linuxserver/ffmpeg:latest`，
 本次所有 ffmpeg/ffprobe 调用均固定使用刚拉取的 image ID，不使用 runner 的 APT FFmpeg。
 镜像是 LinuxServer.io 维护的第三方构建。报告包含 image ID、RepoDigests、FFmpeg 和 SVT-AV1 版本。
 容器内只执行媒体命令，Python 留在 runner；无需镜像预装 Python。输入只读挂载，输出单独可写，编码容器禁用网络。
@@ -83,84 +84,27 @@ python3 scripts/compress_av1.py /path/to/input.mp4 --output-dir /path/to/new-out
 `report.json` 保存输入/输出探测结果及 FFmpeg 版本；`encode.log` 包含 SVT-AV1 实际版本。
 本地测试不能替代 GitHub runner 实际运行验证。
 
-GitHub Actions workflows for building FFmpeg from upstream `master` and running AV1 compression tests.
+## FFmpeg 源码编译
 
-## What this project does
+统一入口 [build-ffmpeg.yml](.github/workflows/build-ffmpeg.yml)，保留原生 Runner 和 `ubuntu:devel` 容器两条路线，共享输入、Runner 解析和相同构建步骤。无需独立的调用、CI 或定时工作流。
 
-- Pull FFmpeg from upstream source (git.ffmpeg.org).
-- Auto-normalize gitweb/shortlog URLs into a cloneable Git URL.
-- Build FFmpeg with common external codec libraries.
-- Run an AV1 compression test and collect metrics.
-- Upload build artifacts and optional GitHub Release assets.
+| 触发 | 行为 |
+| --- | --- |
+| 手动 / `workflow_call` | `route=container`（默认）、`native` 或 `both` |
+| 修改编译工作流的 main Push / 指向 main 的 PR | 同时验证两条编译路线，默认不发布 |
+| 每日 UTC 20:00（北京时间次日 04:00） | 仅容器编译上游 `master`，不发布 |
+| `repository_dispatch` | 默认容器编译一次，不重复触发多个入口 |
 
-## Workflows
+媒体脚本、视频处理工作流及文档修改不触发源码编译。`repo_url`、`ffmpeg_branch`、`test_seconds`（默认 8 秒）、`runner_image`、`custom_env` 和 `create_release` 输入继续保留。URL 仍接受 gitweb/shortlog 形式，`masterd` 分支名纠正为 `master`。除引导 Job 外沿用动态 Runner，容器发行版保持 `ubuntu:devel`。
 
-- `.github/workflows/build-ffmpeg_dev.yml`
-  - Main runner-based build workflow (uses `ubuntu-latest`).
-- `.github/workflows/build-ffmpeg_indocker_dev.yml`
-  - Main container-based build workflow (runner `ubuntu-latest`, container `ubuntu:devel`).
-- `.github/workflows/call-build.yml`
-  - Scheduled/matrix caller workflow.
-- `.github/workflows/ci.yml`
-  - Push/PR auto CI workflow that tests both `build-ffmpeg_dev.yml` and `build-ffmpeg_indocker_dev.yml`.
+`create_release` 默认 false。发布时只允许选择单条路线，避免两条路线写入同名 Release 附件。构建保留安装压缩包、SHA-256、AV1 合成样本指标、构建日志及失败摘要；Artifact 保留期沿用 14 天。编译产生的合成样本测试，与真实私有视频的质量验收分开判断。
 
-## Important compatibility behavior
+## 工作流清单
 
-The workflows accept inputs like:
+| 文件 | 用途 |
+| --- | --- |
+| [build-ffmpeg.yml](.github/workflows/build-ffmpeg.yml) | FFmpeg 源码编译、CI 和定时运行 |
+| [compress-av1.yml](.github/workflows/compress-av1.yml) | OneDrive 批量压缩及回传 |
+| [compress-av1_ghrelease.yml](.github/workflows/compress-av1_ghrelease.yml) | Release 片段参数比较、全片压缩及回传 |
 
-- `https://git.ffmpeg.org/gitweb/ffmpeg.git`
-- `https://git.ffmpeg.org/gitweb/ffmpeg.git/shortlog/refs/heads/masterd`
-
-They will normalize the URL to a cloneable Git endpoint and then build the `master` branch.
-If `masterd` is provided by mistake as the branch, it is auto-corrected to `master`.
-
-## Manual usage
-
-From GitHub Actions, run one of:
-
-- `Build FFmpeg (Dev)`
-- `(Docker) Build FFmpeg (Dev)`
-
-Key inputs:
-
-- `repo_url`: upstream source URL.
-- `ffmpeg_branch`: branch name, default `master`.
-- `test_seconds`: AV1 test duration, default `8`.
-- `create_release`: whether to create/update release.
-
-Fixed runtime images in workflow definitions:
-
-- Runner image: `ubuntu-latest`
-- Docker container image: `ubuntu:devel`
-
-Note: `create_release` defaults to `false` to keep workflow permissions minimal by default.
-
-## Recommended repository Actions settings
-
-Use least privilege in repository settings:
-
-1. `Settings` -> `Actions` -> `General`.
-2. Set `Workflow permissions` to `Read repository contents permission`.
-3. Keep `Allow GitHub Actions to create and approve pull requests` disabled unless required.
-
-## VS Code + Copilot failure-fix loop
-
-The `CI Build and Test` workflow runs automatically on push and pull requests.
-
-It runs these two workflows every time:
-
-- `build-ffmpeg_dev.yml`
-- `build-ffmpeg_indocker_dev.yml`
-
-On failure each build workflow still uploads logs and artifacts, including `failure-summary.md` when available.
-
-Then you can ask Copilot in VS Code to fix based on that summary and push again to retrigger CI.
-
-## Output
-
-Each run provides:
-
-- FFmpeg install tarball.
-- AV1 test metrics (`av1_metrics.txt`).
-- Build logs (`configure.log`, `make.log`, encoder list).
-- Optional GitHub Release with assets.
+旧 `build-ffmpeg_dev.yml`、`build-ffmpeg_indocker_dev.yml`、`call-build.yml`、`ci.yml` 和 `gh-cache-av1-benchmark.yml` 已并入上述入口。旧路径的手动/CLI 调用需更新；已有运行使用其启动时的提交继续执行。

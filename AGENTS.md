@@ -518,7 +518,7 @@ https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workf
 
 本仓库使用 GitHub Actions 编译 FFmpeg，并提供独立的 OneDrive 视频转 AV1 MP4 流程。修改前应阅读 `README.md`、`docs/onedrive-setup.md`、`.github/workflows/`、`scripts/compress_av1.py`、`scripts/onedrive_batch.py` 和实际调用代码，区分**FFmpeg 源码编译**与**现成容器执行转码**，不得混用两条路线的验收结论。
 
-当前包含 FFmpeg 编译工作流及 `compress-av1.yml`（OneDrive）、`compress-av1_ghrelease.yml`（Release 全片压缩）、`gh-cache-av1-benchmark.yml`（Release 短片段参数比较）。Release 工作流使用 `READONLY` 下载、`WRITEONLY` 向原 Release 追加唯一命名的成品或报告，不覆盖原附件，不使用公开 Artifact。参考实际 YAML 判断入口、矩阵、构建依赖、上传和发布条件；Part I 的双路线规范不自动授权其他工作流迁移或删减。
+仅维护三个工作流：`build-ffmpeg.yml`（原生/容器源码编译、CI、定时）、`compress-av1.yml`（OneDrive）和 `compress-av1_ghrelease.yml`（Release 的 `compress` / `benchmark` 模式）。共用输入和相同步骤，禁止再次创建只作调用、预检或定时包装的工作流。Release 工作流使用 `READONLY` 下载、`WRITEONLY` 向原 Release 追加唯一命名的成品或报告，不覆盖原附件，不使用公开 Artifact。参考实际 YAML 判断入口、矩阵、构建依赖、上传和发布条件；Part I 的双路线规范不自动授权其他工作流迁移或删减。
 
 ## 媒体处理正确性
 

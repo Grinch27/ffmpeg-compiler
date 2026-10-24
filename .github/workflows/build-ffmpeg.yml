@@ -1,139 +1,136 @@
-name: (Docker) Build FFmpeg (Dev)
-
-permissions:
-  contents: read
-
-on:
-  repository_dispatch:
+# 需求：main 统一手动、CI、定时编译入口；保留 Native/Container 两条路线及原构建命令。
+# 待确认：动态依赖和云端完整构建；后续研究：仅在回归证据支持时进一步整理编译脚本。
+# 优化：共用 runner 解析、输入和 YAML 步骤锚点；媒体/文档修改不触发源码编译。
+# 风险：既有容器特权配置沿用；双路线发布会覆盖同名附件，因此发布时必须选择单路线。
+# 验证：原构建命令一致性、触发/路线选择、main 限制、权限、Action 入口、语法与实际运行。
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+# https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations
+name: Build FFmpeg
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-ffmpeg.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-ffmpeg.yml
+  schedule:
+    - cron: 0 20 * * *
+  repository_dispatch: null
   workflow_dispatch:
     inputs:
+      route:
+        description: Build environment; automatic CI checks both, schedule uses container
+        type: choice
+        default: container
+        options:
+          - container
+          - native
+          - both
       runner_image:
-        description: "Optional Ubuntu runner override"
+        description: Optional Ubuntu runner override
         required: false
-        default: ""
+        default: ''
         type: string
       repo_url:
-        description: "FFmpeg repo URL (gitweb/shortlog URL is also accepted)"
+        description: FFmpeg repo URL (gitweb/shortlog URL is also accepted)
         required: false
-        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
+        default: https://git.ffmpeg.org/gitweb/ffmpeg.git
         type: string
       ffmpeg_branch:
-        description: "Branch to build"
+        description: Branch to build
         required: true
-        default: "master"
+        default: master
         type: string
       test_seconds:
-        description: "AV1 compression test duration (seconds)"
+        description: AV1 compression test duration (seconds)
         required: false
-        default: "8"
+        default: '8'
         type: string
       custom_env:
-        description: "key=value;key=value"
+        description: key=value;key=value
         required: false
-        default: ""
+        default: ''
         type: string
       create_release:
-        description: "Create or update GitHub release"
+        description: Create or update GitHub release
         required: false
         default: false
         type: boolean
   workflow_call:
     inputs:
-      runner_image:
-        description: "Optional Ubuntu runner override"
+      route:
+        description: container, native or both
+        type: string
+        default: container
         required: false
-        default: ""
+      runner_image:
+        description: Optional Ubuntu runner override
+        required: false
+        default: ''
         type: string
       repo_url:
-        description: "FFmpeg repo URL"
+        description: FFmpeg repo URL
         required: false
         type: string
-        default: "https://git.ffmpeg.org/gitweb/ffmpeg.git"
+        default: https://git.ffmpeg.org/gitweb/ffmpeg.git
       ffmpeg_branch:
-        description: "Branch to build"
+        description: Branch to build
         required: false
         type: string
-        default: "master"
+        default: master
       test_seconds:
-        description: "AV1 compression test duration (seconds)"
+        description: AV1 compression test duration (seconds)
         required: false
         type: string
-        default: "8"
+        default: '8'
       custom_env:
-        description: "key=value;key=value"
+        description: key=value;key=value
         required: false
         type: string
-        default: ""
+        default: ''
       create_release:
-        description: "Create or update GitHub release"
+        description: Create or update GitHub release
         required: false
         type: boolean
         default: false
-
-run-name: FFmpeg Docker Dev - ${{ inputs.ffmpeg_branch || 'master' }}
-
+run-name: FFmpeg - ${{ inputs.route || 'automatic' }} - ${{ inputs.ffmpeg_branch || 'master' }}
+permissions: write-all
+defaults:
+  run:
+    shell: bash
 env:
   CONTAINER_IMAGE: &container_image ubuntu:devel
-  DEBIAN_FRONTEND: noninteractive
-  DEBCONF_NONINTERACTIVE_SEEN: "true"
-  APT_LISTCHANGES_FRONTEND: none
-  NEEDRESTART_MODE: a
-  FORCE_UNSAFE_CONFIGURE: "1"
-  TZ: Etc/UTC
-  DISPLAY_TZ: Etc/UTC
-  LANG: C.UTF-8
-  LC_ALL: C.UTF-8
-  GIT_TERMINAL_PROMPT: "0"
-  DOCKER_BUILDKIT: "1"
-  COMPOSE_DOCKER_CLI_BUILD: "1"
   ffmpeg_branch: ${{ inputs.ffmpeg_branch || 'master' }}
   custom_env: ${{ inputs.custom_env || '' }}
-
 jobs:
   runner-image:
     name: ubuntu-latest - runner-image
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
       RUNNER_IMAGE: ${{ steps.resolve-runner-image.outputs.RUNNER_IMAGE }}
       CONTAINER_IMAGE: ${{ env.CONTAINER_IMAGE }}
     steps:
+      - name: Check publishing route
+        env:
+          BUILD_ROUTE: ${{ inputs.route || 'container' }}
+          CREATE_RELEASE: ${{ inputs.create_release || false }}
+        run: |
+          if [[ "$BUILD_ROUTE" == both && "$CREATE_RELEASE" == true ]]; then
+            echo '::error::Choose one build route when publishing a Release to avoid attachment collisions.'
+            exit 1
+          fi
       - name: Resolve runner-image
         id: resolve-runner-image
         uses: Grinch27/github-actions/.github/actions/resolve-runner-image@main
-
-  build:
-    name: Build FFmpeg (Docker) (Dev) - ${{ inputs.ffmpeg_branch || 'master' }}
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+  native:
+    name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - Native FFmpeg
     needs: runner-image
     runs-on: ${{ inputs.runner_image || needs.runner-image.outputs.RUNNER_IMAGE }}
-    permissions: write-all
-    defaults:
-      run:
-        shell: bash
-    container:
-      image: *container_image
-      options: &container_options >-
-        --privileged
-        --user=0:0
-        --pid=host
-        --ipc=host
-        --uts=host
-        --cgroupns=host
-        --cap-add=ALL
-        --security-opt apparmor=unconfined
-        --security-opt seccomp=unconfined
-        --init
-        --pids-limit=-1
-        --shm-size=12g
-        --ulimit nofile=1048576:1048576
-      volumes: &container_volumes
-        - /dev:/dev
-        - /sys:/sys:rw
-        - /sys/fs/cgroup:/sys/fs/cgroup:rw
-        - /run/udev:/run/udev:ro
-        - /lib/modules:/lib/modules:ro
-        - /var/run/docker.sock:/var/run/docker.sock
     env:
       DEBIAN_FRONTEND: noninteractive
       path_build: ${{ github.workspace }}/builder
@@ -144,7 +141,8 @@ jobs:
       path_test: ${{ github.workspace }}/builder/av1-test
       path_release_md: ${{ github.workspace }}/builder/output/release.md
     steps:
-      - name: Set variables
+      - &set_variables
+        name: Set variables
         id: vars
         run: |
           set -euo pipefail
@@ -173,17 +171,16 @@ jobs:
           echo "fallback_repo=${fallback_repo}" >> "${GITHUB_OUTPUT}"
           echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
           echo "status=success" >> "${GITHUB_OUTPUT}"
-
-      - name: Load custom environment
+      - &load_custom_environment
+        name: Load custom environment
         if: ${{ env.custom_env != '' }}
         run: |
           set -euo pipefail
           echo "${{ env.custom_env }}" | tr ';' '\n' | tee -a "${GITHUB_ENV}"
-
       - name: Install dependencies
         run: |
           set -euo pipefail
-          apt-get -yqq update
+          sudo -E apt-get -yqq update
           base_packages=(
             autoconf
             automake
@@ -214,7 +211,7 @@ jobs:
             libx265-dev
           )
 
-          apt-get -yqq install "${base_packages[@]}"
+          sudo -E apt-get -yqq install "${base_packages[@]}"
 
           available_optional_packages=()
           for pkg in "${optional_codec_packages[@]}"; do
@@ -222,18 +219,18 @@ jobs:
             if [[ -n "${candidate}" && "${candidate}" != "(none)" ]]; then
               available_optional_packages+=("${pkg}")
             else
-              echo "::warning::Optional package ${pkg} is not available in current APT sources and will be skipped"
+              echo "::warning::Optional package ${pkg} is not available on this runner image and will be skipped"
             fi
           done
 
           if [[ "${#available_optional_packages[@]}" -gt 0 ]]; then
-            apt-get -yqq install "${available_optional_packages[@]}"
+            sudo -E apt-get -yqq install "${available_optional_packages[@]}"
           fi
 
-          apt-get -yqq autoremove --purge
-          apt-get -yqq clean
-
-      - name: Clone FFmpeg source
+          sudo -E apt-get -yqq autoremove --purge
+          sudo -E apt-get -yqq clean
+      - &clone_ffmpeg_source
+        name: Clone FFmpeg source
         id: clone
         run: |
           set -euo pipefail
@@ -258,8 +255,8 @@ jobs:
           fi
 
           echo "status=success" >> "${GITHUB_OUTPUT}"
-
-      - name: Capture source revision
+      - &capture_source_revision
+        name: Capture source revision
         id: git-rev
         working-directory: ${{ env.path_source }}
         run: |
@@ -268,8 +265,8 @@ jobs:
           git_hash="$(git rev-parse HEAD)"
           echo "git_desc=${git_desc}" | tee -a "${GITHUB_OUTPUT}"
           echo "git_hash=${git_hash}" | tee -a "${GITHUB_OUTPUT}"
-
-      - name: Configure and build FFmpeg
+      - &configure_and_build_ffmpeg
+        name: Configure and build FFmpeg
         working-directory: ${{ env.path_source }}
         run: |
           set -euo pipefail
@@ -313,8 +310,8 @@ jobs:
           export LD_LIBRARY_PATH="${path_install}/lib:${LD_LIBRARY_PATH:-}"
           "${path_install}/bin/ffmpeg" -hide_banner -version | tee "${path_logs}/ffmpeg-version.txt"
           "${path_install}/bin/ffmpeg" -hide_banner -encoders | grep -E "av1|264|265" | tee "${path_logs}/encoders.txt"
-
-      - name: Run AV1 compression test
+      - &run_av1_compression_test
+        name: Run AV1 compression test
         id: av1-test
         run: |
           set -euo pipefail
@@ -404,8 +401,8 @@ jobs:
             echo "output_vs_input_percent=${ratio_percent}"
             echo "saved_percent=${saved_percent}"
           } | tee -a "${METRIC_FILE}"
-
-      - name: Package outputs
+      - &package_outputs
+        name: Package outputs
         run: |
           set -euo pipefail
           mkdir -p "${path_output}"
@@ -413,8 +410,8 @@ jobs:
           tar -C "${path_install}" -czf "${path_output}/${tar_name}" .
           cp -f "${path_test}/av1_metrics.txt" "${path_output}/av1_metrics.txt"
           sha256sum "${path_output}/${tar_name}" | tee "${path_output}/sha256sum.txt"
-
-      - name: Generate release note
+      - &generate_release_note
+        name: Generate release note
         id: release-md
         run: |
           set -euo pipefail
@@ -445,8 +442,8 @@ jobs:
             echo "release_tag=${release_tag}"
             echo "release_name=${release_name}"
           } | tee -a "${GITHUB_OUTPUT}"
-
-      - name: Capture failure summary
+      - &capture_failure_summary
+        name: Capture failure summary
         if: ${{ failure() }}
         run: |
           set -euo pipefail
@@ -481,10 +478,133 @@ jobs:
               echo "av1_metrics.txt not found"
             fi
           } | tee "${summary_file}" | tee -a "${GITHUB_STEP_SUMMARY}"
-
       - name: Upload artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@main
+        with:
+          name: ffmpeg-host-${{ steps.vars.outputs.branch }}-${{ steps.git-rev.outputs.git_desc }}
+          path: |
+            ${{ env.path_output }}/*
+            ${{ env.path_logs }}/*
+            ${{ env.path_test }}/*
+          if-no-files-found: warn
+          retention-days: 14
+      - &upload_release
+        name: Upload release
+        if: ${{ inputs.create_release || false }}
+        uses: ncipollo/release-action@main
+        with:
+          name: ${{ steps.release-md.outputs.release_name }}
+          tag: ${{ steps.release-md.outputs.release_tag }}
+          bodyFile: ${{ env.path_release_md }}
+          artifacts: ${{ env.path_output }}/*
+          allowUpdates: true
+          removeArtifacts: false
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || inputs.route == 'native' || inputs.route
+      == 'both'
+  container:
+    name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - ubuntu:devel - FFmpeg
+    needs: runner-image
+    runs-on: ${{ inputs.runner_image || needs.runner-image.outputs.RUNNER_IMAGE }}
+    permissions: write-all
+    container:
+      image: *container_image
+      options: --privileged --user=0:0 --pid=host --ipc=host --uts=host --cgroupns=host --cap-add=ALL --security-opt
+        apparmor=unconfined --security-opt seccomp=unconfined --init --pids-limit=-1 --shm-size=12g --ulimit nofile=1048576:1048576
+      volumes:
+        - /dev:/dev
+        - /sys:/sys:rw
+        - /sys/fs/cgroup:/sys/fs/cgroup:rw
+        - /run/udev:/run/udev:ro
+        - /lib/modules:/lib/modules:ro
+        - /var/run/docker.sock:/var/run/docker.sock
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      DEBCONF_NONINTERACTIVE_SEEN: 'true'
+      APT_LISTCHANGES_FRONTEND: none
+      NEEDRESTART_MODE: a
+      FORCE_UNSAFE_CONFIGURE: '1'
+      TZ: Etc/UTC
+      DISPLAY_TZ: Etc/UTC
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      GIT_TERMINAL_PROMPT: '0'
+      DOCKER_BUILDKIT: '1'
+      COMPOSE_DOCKER_CLI_BUILD: '1'
+      path_build: ${{ github.workspace }}/builder
+      path_source: ${{ github.workspace }}/builder/ffmpeg
+      path_install: ${{ github.workspace }}/builder/install
+      path_output: ${{ github.workspace }}/builder/output
+      path_logs: ${{ github.workspace }}/builder/logs
+      path_test: ${{ github.workspace }}/builder/av1-test
+      path_release_md: ${{ github.workspace }}/builder/output/release.md
+    steps:
+      - *set_variables
+      - *load_custom_environment
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          apt-get -yqq update
+          base_packages=(
+            autoconf
+            automake
+            build-essential
+            ca-certificates
+            cmake
+            curl
+            git
+            meson
+            nasm
+            ninja-build
+            pkg-config
+            python3
+            texinfo
+            yasm
+            zlib1g-dev
+          )
+
+          optional_codec_packages=(
+            libaom-dev
+            libdav1d-dev
+            libmp3lame-dev
+            libopus-dev
+            libsvtav1-dev
+            libvorbis-dev
+            libvpx-dev
+            libx264-dev
+            libx265-dev
+          )
+
+          apt-get -yqq install "${base_packages[@]}"
+
+          available_optional_packages=()
+          for pkg in "${optional_codec_packages[@]}"; do
+            candidate="$(apt-cache policy "${pkg}" | awk '/Candidate:/ {print $2}')"
+            if [[ -n "${candidate}" && "${candidate}" != "(none)" ]]; then
+              available_optional_packages+=("${pkg}")
+            else
+              echo "::warning::Optional package ${pkg} is not available in current APT sources and will be skipped"
+            fi
+          done
+
+          if [[ "${#available_optional_packages[@]}" -gt 0 ]]; then
+            apt-get -yqq install "${available_optional_packages[@]}"
+          fi
+
+          apt-get -yqq autoremove --purge
+          apt-get -yqq clean
+      - *clone_ffmpeg_source
+      - *capture_source_revision
+      - *configure_and_build_ffmpeg
+      - *run_av1_compression_test
+      - *package_outputs
+      - *generate_release_note
+      - *capture_failure_summary
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@main
         with:
           name: ffmpeg-docker-${{ steps.vars.outputs.branch }}-${{ steps.git-rev.outputs.git_desc }}
           path: |
@@ -493,16 +613,5 @@ jobs:
             ${{ env.path_test }}/*
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Upload release
-        if: ${{ inputs.create_release || false }}
-        uses: ncipollo/release-action@v1
-        with:
-          name: ${{ steps.release-md.outputs.release_name }}
-          tag: ${{ steps.release-md.outputs.release_tag }}
-          bodyFile: ${{ env.path_release_md }}
-          artifacts: "${{ env.path_output }}/*"
-          allowUpdates: true
-          removeArtifacts: false
-          replacesArtifacts: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - *upload_release
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || inputs.route != 'native'

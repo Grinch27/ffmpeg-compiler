@@ -1,10 +1,9 @@
-# 需求：指定 Release → 校验下载/合并 → AV1 编码验证 → 回传原 Release。
-# 待确认：readonly/writeonly 的实际权限、真实媒体兼容性及主观画质。
-# 后续研究：代表片段的 CRF/preset 比较与 VMAF；当前每次只编码一组参数。
-# 优化：复用编码器，不安装 rclone，不用 Artifact 中转；分片直接追加到输入文件。
+# 需求：main 指定 Release，统一片段参数比较/全片压缩入口，结果回传原 Release。
+# 待确认：实际媒体兼容性和主观画质；后续研究：据片段分数和审片选择全片参数。
+# 优化：共用预检、runner 与镜像获取；不安装 rclone，不用 Artifact 中转。
 # 风险：有损编码和运行配额；失败可能留下本次已上传附件，不覆盖或删除原附件。
 # 验证：分片/原文件 SHA-256、完整解码、上传附件大小/digest；静态测试不替代云端实跑。
-name: Compress Release Video to AV1 MP4
+name: Release AV1 Benchmark and Compression
 
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 on:
@@ -15,17 +14,28 @@ on:
         required: true
         default: ""
         type: string
+      mode:
+        description: "compress: full video; benchmark: compare short clips"
+        default: compress
+        type: choice
+        options:
+          - compress
+          - benchmark
       crf:
-        description: "Quality: lower is better/larger (1-40)"
+        description: "Full-video CRF: lower is better/larger (1-40)"
         default: "30"
         type: string
       preset:
-        description: "Speed: lower is slower (4-9)"
+        description: "Full-video preset: lower is slower (4-9)"
         default: "6"
         type: string
 
-run-name: AV1 MP4 - GitHub Release - CRF ${{ inputs.crf }} - preset ${{ inputs.preset }}
+run-name: Release AV1 - ${{ inputs.mode }} - CRF ${{ inputs.crf }} - preset ${{ inputs.preset }}
 permissions: write-all
+
+concurrency:
+  group: release-av1-${{ github.ref }}-${{ inputs.mode }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -47,7 +57,7 @@ jobs:
     name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - Release AV1
     needs: runner-image
     runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
-    timeout-minutes: 350
+    timeout-minutes: ${{ inputs.mode == 'benchmark' && 120 || 350 }}
     steps:
       - uses: actions/checkout@main
         with:
@@ -55,13 +65,11 @@ jobs:
 
       - name: Check Release credentials
         env:
-          GH_TOKEN: ${{ secrets.READONLY }}
-          GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
+          READ_TOKEN: ${{ secrets.READONLY }}
+          WRITE_TOKEN: ${{ secrets.WRITEONLY }}
+          RELEASE_URL: ${{ inputs.release_url }}
         run: |
-          test -n "$GH_TOKEN" && test -n "$GH_RELEASE_WRITE_TOKEN" || {
-            echo '::error::Set readonly (Contents: read) and writeonly (Contents: read and write) for the source repository.'
-            exit 1
-          }
+          python3 scripts/check_release_credentials.py --release-url "$RELEASE_URL"
 
       - name: Pull FFmpeg
         run: |
@@ -72,15 +80,21 @@ jobs:
           docker image inspect "$image_id" > runtime/image.json
           printf 'FFMPEG_DOCKER_IMAGE=%s\n' "$image_id" >> "$GITHUB_ENV"
           printf 'FFMPEG_IMAGE_METADATA=runtime/image.json\n' >> "$GITHUB_ENV"
+          printf 'FF_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
 
-      - name: Download, encode, verify and upload to source Release
-        timeout-minutes: 330
+      - name: Process video and return verified results to source Release
+        timeout-minutes: ${{ inputs.mode == 'benchmark' && 110 || 330 }}
         env:
           GH_TOKEN: ${{ secrets.READONLY }}
           GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
           RELEASE_URL: ${{ inputs.release_url }}
+          MODE: ${{ inputs.mode }}
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
         run: |
-          python3 scripts/release_av1.py \
-            --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET"
+          if [[ "$MODE" == benchmark ]]; then
+            python3 scripts/benchmark_release_av1.py --release-url "$RELEASE_URL"
+          else
+            python3 scripts/release_av1.py \
+              --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET"
+          fi
