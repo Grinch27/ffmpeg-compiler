@@ -1,5 +1,11 @@
 # ffmpeg-compiler
 
+本项目仅保留 `main`；实现、修复、凭据预检和运行都在 `main` 完成，不创建测试或开发分支。
+
+## Release AV1 参数测试
+
+使用 `.github/workflows/gh-cache-av1-benchmark.yml`，只输入默认留空的 `release_url`。在原视频 12%、50%、82% 处各取 6 秒，比较 CRF 24/30/36 × preset 6/8，共 18 个样本；记录体积、编码耗时、SSIM 和可用时的 VMAF，完整解码各样本后即清理。报告使用 `av1-benchmark-<run_id>-<attempt>` 唯一文件名回传原 Release，逐个检查上传大小和 GitHub SHA-256；不上传视频样本，不使用公开 Artifact。片段分数不代表全片码率预测，也不能独自判定最优参数。下载复用分片流式合并，仅要求原片大小加 1 GB 可用磁盘；全片转码仍使用下面的独立工作流及其空间要求。
+
 ## GitHub Release 视频 → AV1 → 原 Release
 
 独立工作流 [compress-av1_ghrelease.yml](.github/workflows/compress-av1_ghrelease.yml)，与下面的 OneDrive 流程分开运行，不重新编译 FFmpeg，不安装 rclone，不使用 Actions Artifact。

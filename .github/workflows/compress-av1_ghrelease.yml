@@ -33,6 +33,7 @@ defaults:
 
 jobs:
   runner-image:
+    if: github.ref == 'refs/heads/main'
     name: ubuntu-latest - runner-image
     runs-on: ubuntu-latest
     outputs:
@@ -54,8 +55,8 @@ jobs:
 
       - name: Check Release credentials
         env:
-          GH_TOKEN: ${{ secrets.readonly }}
-          GH_RELEASE_WRITE_TOKEN: ${{ secrets.writeonly }}
+          GH_TOKEN: ${{ secrets.READONLY }}
+          GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
         run: |
           test -n "$GH_TOKEN" && test -n "$GH_RELEASE_WRITE_TOKEN" || {
             echo '::error::Set readonly (Contents: read) and writeonly (Contents: read and write) for the source repository.'
@@ -75,8 +76,8 @@ jobs:
       - name: Download, encode, verify and upload to source Release
         timeout-minutes: 330
         env:
-          GH_TOKEN: ${{ secrets.readonly }}
-          GH_RELEASE_WRITE_TOKEN: ${{ secrets.writeonly }}
+          GH_TOKEN: ${{ secrets.READONLY }}
+          GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
           RELEASE_URL: ${{ inputs.release_url }}
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
