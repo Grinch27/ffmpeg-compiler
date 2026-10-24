@@ -1,0 +1,85 @@
+# 需求：指定 Release → 校验下载/合并 → AV1 编码验证 → 回传原 Release。
+# 待确认：readonly/writeonly 的实际权限、真实媒体兼容性及主观画质。
+# 后续研究：代表片段的 CRF/preset 比较与 VMAF；当前每次只编码一组参数。
+# 优化：复用编码器，不安装 rclone，不用 Artifact 中转；分片直接追加到输入文件。
+# 风险：有损编码和运行配额；失败可能留下本次已上传附件，不覆盖或删除原附件。
+# 验证：分片/原文件 SHA-256、完整解码、上传附件大小/digest；静态测试不替代云端实跑。
+name: Compress Release Video to AV1 MP4
+
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+on:
+  workflow_dispatch:
+    inputs:
+      release_url:
+        description: "Source Release URL; results return to the same Release"
+        required: true
+        default: ""
+        type: string
+      crf:
+        description: "Quality: lower is better/larger (1-40)"
+        default: "30"
+        type: string
+      preset:
+        description: "Speed: lower is slower (4-9)"
+        default: "6"
+        type: string
+
+run-name: AV1 MP4 - GitHub Release - CRF ${{ inputs.crf }} - preset ${{ inputs.preset }}
+permissions: write-all
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  runner-image:
+    name: ubuntu-latest - runner-image
+    runs-on: ubuntu-latest
+    outputs:
+      RUNNER_IMAGE: ${{ steps.resolve-runner-image.outputs.RUNNER_IMAGE }}
+    steps:
+      - name: Resolve runner-image
+        id: resolve-runner-image
+        uses: Grinch27/github-actions/.github/actions/resolve-runner-image@main
+
+  action:
+    name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - Release AV1
+    needs: runner-image
+    runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@main
+        with:
+          persist-credentials: false
+
+      - name: Check Release credentials
+        env:
+          GH_TOKEN: ${{ secrets.readonly }}
+          GH_RELEASE_WRITE_TOKEN: ${{ secrets.writeonly }}
+        run: |
+          test -n "$GH_TOKEN" && test -n "$GH_RELEASE_WRITE_TOKEN" || {
+            echo '::error::Set readonly (Contents: read) and writeonly (Contents: read and write) for the source repository.'
+            exit 1
+          }
+
+      - name: Pull FFmpeg
+        run: |
+          set -euo pipefail
+          mkdir -p runtime
+          docker pull docker.io/linuxserver/ffmpeg:latest
+          image_id="$(docker image inspect docker.io/linuxserver/ffmpeg:latest --format '{{.Id}}')"
+          docker image inspect "$image_id" > runtime/image.json
+          printf 'FFMPEG_DOCKER_IMAGE=%s\n' "$image_id" >> "$GITHUB_ENV"
+          printf 'FFMPEG_IMAGE_METADATA=runtime/image.json\n' >> "$GITHUB_ENV"
+
+      - name: Download, encode, verify and upload to source Release
+        timeout-minutes: 330
+        env:
+          GH_TOKEN: ${{ secrets.readonly }}
+          GH_RELEASE_WRITE_TOKEN: ${{ secrets.writeonly }}
+          RELEASE_URL: ${{ inputs.release_url }}
+          CRF: ${{ inputs.crf }}
+          PRESET: ${{ inputs.preset }}
+        run: |
+          python3 scripts/release_av1.py \
+            --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET"

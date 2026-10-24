@@ -1,5 +1,25 @@
 # ffmpeg-compiler
 
+## GitHub Release 视频 → AV1 → 原 Release
+
+独立工作流 [compress-av1_ghrelease.yml](.github/workflows/compress-av1_ghrelease.yml)，与下面的 OneDrive 流程分开运行，不重新编译 FFmpeg，不安装 rclone，不使用 Actions Artifact。
+
+在本仓库 Actions Secrets 中配置 `readonly`（源仓库 Contents: Read-only）和 `writeonly`（源仓库 Contents: Read and write）。下载和上传分别使用对应 Secret，编码子进程不接收这两个令牌。PAT 的显示名称不会自动创建 Secret。
+
+运行时只填三个输入：
+
+| 输入 | 默认值 | 用途 |
+| --- | --- | --- |
+| `release_url` | 空，运行时必填 | `https://github.com/OWNER/REPO/releases/tag/TAG` |
+| `crf` | `30` | 画质/体积；支持 1–40 |
+| `preset` | `6` | 速度；支持 4–9 |
+
+Release 须已发布、允许追加附件，只包含一个源视频或一组 `视频扩展名.part001` 起的连续原始字节分片；忽略本工作流产生的 `av1-result-` 附件和非视频文件。源附件须有 GitHub SHA-256 digest，分片输入另须有单行 `ORIGINAL_SHA256SUMS`。下载按序直接追加到一个临时输入文件，检查每个附件的大小/哈希及合并后原文件哈希，不同时保留全部分片。`manifest.json` 和原说明不执行为代码。
+
+复用 `scripts/compress_av1.py` 的 SDR/AAC 支持范围和完整解码验证。每次运行一组 CRF/preset，属于基线压缩，不宣称已找到最优参数或主观无损。完成后向**同一 Release** 追加成品、报告和日志；私有源的结果随该 Release 保持私有。文件使用 `av1-result-crf<CRF>-p<PRESET>-<run_id>-<attempt>` 前缀，不覆盖或删除原附件。成品超过 1,900,000,000 字节时按序拆片回传，输出 SHA-256 与分片顺序见最后上传的 `.manifest.json`。
+
+只有编码/完整解码通过、上传大小与 GitHub digest 校验通过，并发布 `status: complete` 的 manifest 后才报告成功；上传校验依据 GitHub 元数据，未进行全量下载回读。失败可能留下本次部分附件，不能只凭成品附件存在认定整次运行成功。编码失败时尝试把诊断报告/日志回传原 Release，不上传未验证视频。下载前要求可用磁盘至少为原视频大小的 4 倍加一个 1.9 GB 上传分片，本次运行限时 350 分钟，需考虑账户 Actions 配额。
+
 ## 用户视频 → AV1 MP4
 
 OneDrive 部署全过程见 [docs/onedrive-setup.md](docs/onedrive-setup.md)。唯一来源为 OneDrive，在 action job 内逐个下载、压缩 `od:ffmpeg` 直接子视频文件，并回传 `od:ffmpeg-output/<run_id>-<attempt>-<随机后缀>/`，不使用 Artifact 中转；本地授权入口 `bash scripts/connect_onedrive.sh`。需要先由本人完成微软浏览器授权并设置专用 Secret。
