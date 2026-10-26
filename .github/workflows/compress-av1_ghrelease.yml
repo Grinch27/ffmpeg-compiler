@@ -7,11 +7,6 @@ name: Release AV1 Benchmark and Compression
 
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/compress-av1_ghrelease.yml
   workflow_dispatch:
     inputs:
       release_url:
@@ -48,9 +43,7 @@ defaults:
 
 jobs:
   runner-image:
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name != 'push' || github.event.head_commit.message == 'run: AV1 benchmark first 1200 frames')
+    if: github.ref == 'refs/heads/main'
     name: ubuntu-latest - runner-image
     runs-on: ubuntu-latest
     outputs:
@@ -74,7 +67,7 @@ jobs:
         env:
           READ_TOKEN: ${{ secrets.READONLY }}
           WRITE_TOKEN: ${{ secrets.WRITEONLY }}
-          RELEASE_URL: ${{ inputs.release_url || 'https://github.com/Grinch27/gh-cache/releases/tag/test-media-20261024-liuying' }}
+          RELEASE_URL: ${{ inputs.release_url }}
         run: |
           python3 scripts/check_release_credentials.py --release-url "$RELEASE_URL"
 
@@ -94,8 +87,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.READONLY }}
           GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
-          RELEASE_URL: ${{ inputs.release_url || 'https://github.com/Grinch27/gh-cache/releases/tag/test-media-20261024-liuying' }}
-          MODE: ${{ inputs.mode || 'benchmark' }}
+          RELEASE_URL: ${{ inputs.release_url }}
+          MODE: ${{ inputs.mode }}
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
         run: |
