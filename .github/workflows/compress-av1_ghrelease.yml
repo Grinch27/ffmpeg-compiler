@@ -1,4 +1,4 @@
-# 需求：main 指定 Release，统一片段参数比较/全片压缩入口，结果回传原 Release。
+# 需求：默认比较原视频前 1200 帧（六组参数）；明确选择 compress 才执行全片压缩。
 # 待确认：实际媒体兼容性和主观画质；后续研究：据片段分数和审片选择全片参数。
 # 优化：共用预检、runner 与镜像获取；不安装 rclone，不用 Artifact 中转。
 # 风险：有损编码和运行配额；失败可能留下本次已上传附件，不覆盖或删除原附件。
@@ -7,6 +7,11 @@ name: Release AV1 Benchmark and Compression
 
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/compress-av1_ghrelease.yml
   workflow_dispatch:
     inputs:
       release_url:
@@ -15,8 +20,8 @@ on:
         default: ""
         type: string
       mode:
-        description: "compress: full video; benchmark: compare short clips"
-        default: compress
+        description: "benchmark: first 1200 frames; compress: full video"
+        default: benchmark
         type: choice
         options:
           - compress
@@ -43,7 +48,7 @@ defaults:
 
 jobs:
   runner-image:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'push' || github.event.head_commit.message == 'run: AV1 benchmark first 1200 frames')
     name: ubuntu-latest - runner-image
     runs-on: ubuntu-latest
     outputs:
@@ -57,7 +62,7 @@ jobs:
     name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - Release AV1
     needs: runner-image
     runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
-    timeout-minutes: ${{ inputs.mode == 'benchmark' && 120 || 350 }}
+    timeout-minutes: ${{ inputs.mode == 'benchmark' && 240 || 350 }}
     steps:
       - uses: actions/checkout@main
         with:
@@ -67,7 +72,7 @@ jobs:
         env:
           READ_TOKEN: ${{ secrets.READONLY }}
           WRITE_TOKEN: ${{ secrets.WRITEONLY }}
-          RELEASE_URL: ${{ inputs.release_url }}
+          RELEASE_URL: ${{ inputs.release_url || 'https://github.com/Grinch27/gh-cache/releases/tag/test-media-20261024-liuying' }}
         run: |
           python3 scripts/check_release_credentials.py --release-url "$RELEASE_URL"
 
@@ -83,12 +88,12 @@ jobs:
           printf 'FF_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
 
       - name: Process video and return verified results to source Release
-        timeout-minutes: ${{ inputs.mode == 'benchmark' && 110 || 330 }}
+        timeout-minutes: ${{ inputs.mode == 'benchmark' && 230 || 330 }}
         env:
           GH_TOKEN: ${{ secrets.READONLY }}
           GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
-          RELEASE_URL: ${{ inputs.release_url }}
-          MODE: ${{ inputs.mode }}
+          RELEASE_URL: ${{ inputs.release_url || 'https://github.com/Grinch27/gh-cache/releases/tag/test-media-20261024-liuying' }}
+          MODE: ${{ inputs.mode || 'benchmark' }}
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
         run: |

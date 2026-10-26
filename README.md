@@ -4,7 +4,7 @@
 
 ## Release AV1 参数测试
 
-使用 `.github/workflows/compress-av1_ghrelease.yml`，选择 `mode=benchmark`，输入默认留空的 `release_url`。在原视频 12%、50%、82% 处各取 6 秒，比较 CRF 24/30/36 × preset 6/8，共 18 个样本；记录体积、编码耗时、SSIM 和可用时的 VMAF，完整解码各样本后即清理。报告使用 `av1-benchmark-<run_id>-<attempt>` 唯一文件名回传原 Release，逐个检查上传大小和 GitHub SHA-256；不上传视频样本，不使用公开 Artifact。片段分数不代表全片码率预测，也不能独自判定最优参数。下载复用分片流式合并，仅要求原片大小加 1 GB 可用磁盘；全片转码选择同一工作流的 `mode=compress`，其空间要求见下文。
+使用 `.github/workflows/compress-av1_ghrelease.yml`，默认 `mode=benchmark`，填写 `release_url`。从原视频开始连续解码**前 1200 帧**，生成一份 FFV1 无损参考，以此分别比较 CRF 24/30/36 × preset 6/8，共 **6 个样本**。每个 AV1 样本都须通过恰好 1200 帧、像素格式及完整解码验证，记录体积、耗时、SSIM 和可用时的 VMAF；测试后删除样本。取样按帧数而非固定秒数，保留原帧时间节奏。报告使用 `av1-benchmark-<run_id>-<attempt>` 唯一文件名回传原 Release，逐个检查上传大小和 GitHub SHA-256；不上传视频样本，不使用公开 Artifact。片段分数不代表全片码率预测，也不能独自判定最优参数。下载复用分片流式合并，至少需要原片大小加 1 GB；创建 FFV1 参考前额外检查磁盘空间。只有明确选择 `mode=compress` 才执行全片转码，其空间要求见下文。
 
 ## GitHub Release 视频 → AV1 → 原 Release
 
@@ -12,12 +12,12 @@
 
 在本仓库 Actions Secrets 中配置 `readonly`（源仓库 Contents: Read-only）和 `writeonly`（源仓库 Contents: Read and write）。下载和上传分别使用对应 Secret，编码子进程不接收这两个令牌。PAT 的显示名称不会自动创建 Secret。
 
-同一个入口支持两种操作：`mode=compress`（默认）执行全片压缩，`mode=benchmark` 比较短片段；CRF/preset 输入仅用于全片压缩。
+同一入口的 `mode=benchmark`（默认）比较前 1200 帧的六组参数，`mode=compress` 为显式全片压缩；CRF/preset 输入仅用于全片压缩。
 
 | 输入 | 默认值 | 用途 |
 | --- | --- | --- |
 | `release_url` | 空，运行时必填 | `https://github.com/OWNER/REPO/releases/tag/TAG` |
-| `mode` | `compress` | 全片压缩；`benchmark` 比较三处短片段 |
+| `mode` | `benchmark` | 默认比较前 1200 帧；`compress` 显式执行全片压缩 |
 | `crf` | `30` | 全片画质/体积；支持 1–40 |
 | `preset` | `6` | 速度；支持 4–9 |
 
@@ -105,6 +105,6 @@ python3 scripts/compress_av1.py /path/to/input.mp4 --output-dir /path/to/new-out
 | --- | --- |
 | [build-ffmpeg.yml](.github/workflows/build-ffmpeg.yml) | FFmpeg 源码编译、CI 和定时运行 |
 | [compress-av1.yml](.github/workflows/compress-av1.yml) | OneDrive 批量压缩及回传 |
-| [compress-av1_ghrelease.yml](.github/workflows/compress-av1_ghrelease.yml) | Release 片段参数比较、全片压缩及回传 |
+| [compress-av1_ghrelease.yml](.github/workflows/compress-av1_ghrelease.yml) | Release 前 1200 帧 AV1 参数测试、全片压缩及回传 |
 
 旧 `build-ffmpeg_dev.yml`、`build-ffmpeg_indocker_dev.yml`、`call-build.yml`、`ci.yml` 和 `gh-cache-av1-benchmark.yml` 已并入上述入口。旧路径的手动/CLI 调用需更新；已有运行使用其启动时的提交继续执行。
