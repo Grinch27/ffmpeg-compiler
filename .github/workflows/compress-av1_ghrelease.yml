@@ -48,7 +48,9 @@ defaults:
 
 jobs:
   runner-image:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'push' || github.event.head_commit.message == 'run: AV1 benchmark first 1200 frames')
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'push' || github.event.head_commit.message == 'run: AV1 benchmark first 1200 frames')
     name: ubuntu-latest - runner-image
     runs-on: ubuntu-latest
     outputs:
