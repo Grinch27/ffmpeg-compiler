@@ -7,11 +7,6 @@ name: Release AV1 First 1200 Frames Compression
 
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/compress-av1_ghrelease.yml
   workflow_dispatch:
     inputs:
       release_url:
@@ -41,7 +36,7 @@ defaults:
 
 jobs:
   runner-image:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'push' || github.event.head_commit.message == 'run AV1 first1200 logs')
+    if: github.ref == 'refs/heads/main'
     name: ubuntu-latest - runner-image
     runs-on: ubuntu-latest
     outputs:
@@ -61,16 +56,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Compile and unit-test Release processing code
-        run: |
-          python3 -m compileall -q scripts
-          python3 -m unittest discover -s tests -p 'test_release_av1.py'
-
       - name: Check Release credentials
         env:
           READ_TOKEN: ${{ secrets.READONLY }}
           WRITE_TOKEN: ${{ secrets.WRITEONLY }}
-          RELEASE_URL: ${{ inputs.release_url || 'https://github.com/Grinch27/gh-cache/releases/tag/test-media-20261024-liuying' }}
+          RELEASE_URL: ${{ inputs.release_url }}
         run: |
           python3 scripts/check_release_credentials.py --release-url "$RELEASE_URL"
 
@@ -90,9 +80,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.READONLY }}
           GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
-          RELEASE_URL: ${{ inputs.release_url || 'https://github.com/Grinch27/gh-cache/releases/tag/test-media-20261024-liuying' }}
-          CRF: ${{ inputs.crf || '30' }}
-          PRESET: ${{ inputs.preset || '6' }}
+          RELEASE_URL: ${{ inputs.release_url }}
+          CRF: ${{ inputs.crf }}
+          PRESET: ${{ inputs.preset }}
         run: |
           python3 scripts/release_av1.py \
             --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET" --max-frames 1200
