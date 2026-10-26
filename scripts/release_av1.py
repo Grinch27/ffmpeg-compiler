@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# 需求：单个 Release 原视频/连续分片下载校验，复用编码器，成品回传同一 Release。
-# 待确认：源媒体支持范围、Contents 读写令牌、真实网络；不把 CRF 当作最优画质结论。
-# 后续研究/优化：片段参数比较、VMAF、断点续传；当前只保留合并输入，不落盘全部分片。
+# 需求：原片前 1200 帧的单组 AV1 压缩；回传私有 Release MP4、完整编码日志、进度及诊断报告。
+# 待确认：真实媒体时基/AAC 时间戳、令牌权限；CRF 为单组参数而非画质最佳结论。
+# 后续研究：根据 encode.log、progress.log 分析编码速度、资源开销、码率、警告并选择后续参数。
 # 风险：上传失败可留下本次部分附件；唯一运行前缀、不覆盖、不删原附件，不公开私有日志。
-# 验证：输入/分片及原文件哈希、凭据隔离、编码失败禁止上传、上传大小/digest、超限分片。
+# 验证：分片还原、只压缩前 1200 帧、日志完整、成品可解码且输出帧数精确，不覆盖原附件。
 """Download one video, encode AV1, and append verified results to its Release."""
 
 import argparse
@@ -167,7 +167,7 @@ def upload_video(repo, tag, target, prefix):
 
 def upload_reports(repo, tag, encoded, prefix):
     expected = []
-    for name in ('report.json', 'report.md', 'encode.log', 'decode.log'):
+    for name in ('report.json', 'report.md', 'encode.log', 'progress.log', 'decode.log'):
         path = encoded / name
         if path.is_file():
             named = encoded / f'{prefix}.{name}'
@@ -181,12 +181,15 @@ def main():
     parser.add_argument('--release-url', required=True)
     parser.add_argument('--crf', type=int, choices=range(1, 41), default=30)
     parser.add_argument('--preset', type=int, choices=range(4, 10), default=6)
+    parser.add_argument('--max-frames', type=int, default=1200)
     args = parser.parse_args()
+    if args.max_frames <= 0:
+        parser.error('--max-frames must be positive')
     repo, tag = release_target(args.release_url)
     run, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
     if not run.isdecimal() or not attempt.isdecimal():
         raise ValueError('Invalid workflow run identity')
-    prefix = f'{RESULT_PREFIX}crf{args.crf}-p{args.preset}-{run}-{attempt}'
+    prefix = f'{RESULT_PREFIX}first{args.max_frames}-crf{args.crf}-p{args.preset}-{run}-{attempt}'
     release = api(f'repos/{repo}/releases/tags/{quote(tag, safe="")}')
     if release.get('immutable') or release.get('draft'):
         raise ValueError('Use a published, mutable Release')
@@ -202,8 +205,8 @@ def main():
     selected, split = source_assets(assets)
     expected_original = original_digest(repo, assets) if split else digest(selected[0])
     size = sum(a['size'] for a in selected)
-    if shutil.disk_usage('.').free < size * 4 + ASSET_LIMIT:
-        raise ValueError('Insufficient space: requires 4x input size plus one upload part')
+    if shutil.disk_usage('.').free < size + 2_000_000_000:
+        raise ValueError('Insufficient space: source size plus 2 GB reserve required')
     output = Path('output')
     output.mkdir(exist_ok=False)
     combined = hashlib.sha256()
@@ -218,7 +221,8 @@ def main():
         try:
             subprocess.run([sys.executable, 'scripts/compress_av1.py', str(source),
                             '--output-dir', str(output / 'encoded'), '--crf', str(args.crf),
-                            '--preset', str(args.preset), '--threads', '4'],
+                            '--preset', str(args.preset), '--threads', '4',
+                            '--max-frames', str(args.max_frames)],
                            env=encoder_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            check=True, timeout=18000)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -238,14 +242,14 @@ def main():
     manifest = output / f'{prefix}.manifest.json'
     manifest.write_text(json.dumps({'status': 'complete', 'input_sha256': expected_original,
                                    'output_sha256': output_hash, 'crf': args.crf,
-                                   'preset': args.preset, 'assets': expected}, indent=2) + '\n')
+                                   'preset': args.preset, 'max_frames': args.max_frames,
+                                   'assets': expected}, indent=2) + '\n')
     marker = publish(repo, tag, manifest)
     verify_uploaded(repo, release['id'], [marker])
-    summary = (f'AV1 complete: CRF {args.crf}, preset {args.preset}; '
-               f'{report["input_bytes"]} → {report["output_bytes"]} bytes; '
-               f'saved {report["saved_percent"]:.2f}%. '
-               'Full decode and uploaded asset size/SHA-256 checks passed. '
-               'Results and completion manifest are in the source Release.\n')
+    summary = (f'AV1 prefix complete: first {args.max_frames} frames, CRF {args.crf}, '
+               f'preset {args.preset}, output {report["output_bytes"]} bytes, '
+               f'encoding {report["encode_seconds"]:.1f} seconds. '
+               'MP4 and detailed logs were appended to the private Release.\n')
     print(summary)
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as sink:

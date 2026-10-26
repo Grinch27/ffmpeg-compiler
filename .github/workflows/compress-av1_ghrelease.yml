@@ -1,9 +1,9 @@
-# 需求：默认比较原视频前 1200 帧（六组参数）；明确选择 compress 才执行全片压缩。
-# 待确认：实际媒体兼容性和主观画质；后续研究：据片段分数和审片选择全片参数。
+# 需求：仅压缩原始视频开头的 1200 个解码视频帧，回传单组编码成品和完整 FFmpeg/SVT-AV1 日志。
+# 待确认：媒体时间戳及音轨同步；后续研究：结合 encode.log/progress.log 和主观画质决策参数。
 # 优化：共用预检、runner 与镜像获取；不安装 rclone，不用 Artifact 中转。
 # 风险：有损编码和运行配额；失败可能留下本次已上传附件，不覆盖或删除原附件。
 # 验证：分片/原文件 SHA-256、完整解码、上传附件大小/digest；静态测试不替代云端实跑。
-name: Release AV1 Benchmark and Compression
+name: Release AV1 First 1200 Frames Compression
 
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 on:
@@ -14,27 +14,20 @@ on:
         required: true
         default: ""
         type: string
-      mode:
-        description: "benchmark: first 1200 frames; compress: full video"
-        default: benchmark
-        type: choice
-        options:
-          - compress
-          - benchmark
       crf:
-        description: "Full-video CRF: lower is better/larger (1-40)"
+        description: "First 1200-frame CRF (1-40)"
         default: "30"
         type: string
       preset:
-        description: "Full-video preset: lower is slower (4-9)"
+        description: "First 1200-frame encoder preset (4-9)"
         default: "6"
         type: string
 
-run-name: Release AV1 - ${{ inputs.mode }} - CRF ${{ inputs.crf }} - preset ${{ inputs.preset }}
+run-name: Release AV1 first1200 - CRF ${{ inputs.crf || '30' }} - preset ${{ inputs.preset || '6' }}
 permissions: write-all
 
 concurrency:
-  group: release-av1-${{ github.ref }}-${{ inputs.mode }}
+  group: release-av1-${{ github.ref }}
   cancel-in-progress: false
 
 defaults:
@@ -57,7 +50,7 @@ jobs:
     name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - Release AV1
     needs: runner-image
     runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
-    timeout-minutes: ${{ inputs.mode == 'benchmark' && 240 || 350 }}
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@main
         with:
@@ -83,18 +76,13 @@ jobs:
           printf 'FF_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
 
       - name: Process video and return verified results to source Release
-        timeout-minutes: ${{ inputs.mode == 'benchmark' && 230 || 330 }}
+        timeout-minutes: 170
         env:
           GH_TOKEN: ${{ secrets.READONLY }}
           GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
           RELEASE_URL: ${{ inputs.release_url }}
-          MODE: ${{ inputs.mode }}
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
         run: |
-          if [[ "$MODE" == benchmark ]]; then
-            python3 scripts/benchmark_release_av1.py --release-url "$RELEASE_URL"
-          else
-            python3 scripts/release_av1.py \
-              --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET"
-          fi
+          python3 scripts/release_av1.py \
+            --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET" --max-frames 1200
