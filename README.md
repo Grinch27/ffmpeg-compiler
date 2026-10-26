@@ -2,22 +2,23 @@
 
 本项目仅保留 `main`，实现、修复与测试在主分支维护。
 
-## GitHub Release 前 1200 帧 AV1 压缩及日志分析
+## GitHub Release 可选帧数 AV1 压缩与日志分析
 
-工作流 `.github/workflows/compress-av1_ghrelease.yml` 只压缩原始视频开头连续 **1200 帧**，单次执行一组 CRF/preset，不再运行 benchmark、SSIM/VMAF，也不进行全片转码。
+工作流 `.github/workflows/compress-av1_ghrelease.yml` 的 `max_frames` 输入**默认为 0（完整视频全时长）**；设置正整数 N（例如 1200）时，仅压缩原视频开头连续 N 帧。每次执行一组 CRF/preset，不运行 benchmark、SSIM/VMAF。
 保留原分辨率、8/10-bit、显示比例和源帧时间节奏；支持 AAC 音轨的同步拷贝。输出保留为 MP4。默认 `CRF=30`、`preset=6`。
 
 | 工作流输入 | 默认值 | 用途 |
 | --- | --- | --- |
 | `release_url` | 必填 | 私有来源 Release 链接 |
+| `max_frames` | `0` | `0` 完整全片；`1200` 仅压缩前 1200 帧；禁止负数 |
 | `crf` | `30` | SVT-AV1 质量（1–40） |
 | `preset` | `6` | SVT-AV1 速度（4–9） |
 
-输出文件以 `av1-result-first1200-crf<CRF>-p<PRESET>-<run_id>-<attempt>` 开头，全部回传同一**私有 Release**：
+输出文件以 `av1-result-full-crf<CRF>-p<PRESET>-<run_id>-<attempt>`（全片）或 `av1-result-first<N>-crf<CRF>-p<PRESET>-<run_id>-<attempt>`（截帧）开头，全部回传同一**私有 Release**：
 
 | 文件 | 内容 |
 | --- | --- |
-| `.mp4` | 开头 1200 帧 AV1 成品 |
+| `.mp4` | 全片或开头 N 帧 AV1 成品 |
 | `.encode.log` | FFmpeg/SVT-AV1 版本、参数、处理信息、警告、编码耗时与资源统计 |
 | `.progress.log` | 周期性 frame、fps、bitrate、total_size、speed、out_time |
 | `.decode.log` | 解码过程的错误诊断 |
@@ -25,15 +26,15 @@
 | `.report.md` | 人工可读结果摘要 |
 | `.manifest.json` | 完成标记、参数与附件清单 |
 
-只对输出的前 1200 帧报告真实统计值。由于源文件大小是**全片**，不能用其大小与 1200 帧压缩结果直接计算压缩率。
-采用 `READONLY`（私有源仓库读取权限）、`WRITEONLY`（私有源仓库读写权限）两个 Actions Secrets，编码进程不接收令牌；不覆盖原始附件，不创建公开 Artifact。分片校验和原始文件校验沿用当前代码。运行前要求源文件大小加 2 GB 可用空间，本次工作流最长 180 分钟。
+对于 `max_frames=0`，源和输出都是完整视频，可计算真实体积变化；对于 `max_frames>0`，输出仅为开头 N 帧，不能拿完整源文件大小直接计算压缩率。
+采用 `READONLY`（私有源仓库读取权限）、`WRITEONLY`（私有源仓库读写权限）两个 Actions Secrets，编码进程不接收令牌；不覆盖原始附件，不创建公开 Artifact。分片校验和原始文件校验沿用当前代码。短片段模式要求原文件大小加 2 GB 工作空间；全片模式恢复原有的约 `4 × 源文件大小 + 1.9 GB` 磁盘预检。工作流最长 350 分钟，完整编码可能耗费较多 Actions 配额。
 媒体处理仅支持原项目现行 SDR 4:2:0 8/10-bit、AAC 约束；不支持的 HDR、字幕和非 AAC 音轨会明确失败。完整画质是否可接受仍需要对成品进行主观审片。
 
 ## 工作流清单
 
 - `build-ffmpeg.yml`：源码编译、CI 和定时构建。
 - `compress-av1.yml`：OneDrive 转码，保持原有全片行为。
-- `compress-av1_ghrelease.yml`：私有 Release 视频开头 1200 帧压缩、详细日志及成品回传。
+- `compress-av1_ghrelease.yml`：私有 Release 全时长（默认）或前 N 帧 AV1 编码、日志及成品回传。
 
 ## 用户视频 → AV1 MP4
 

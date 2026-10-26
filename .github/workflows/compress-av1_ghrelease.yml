@@ -1,9 +1,9 @@
-# 需求：仅压缩原始视频开头的 1200 个解码视频帧，回传单组编码成品和完整 FFmpeg/SVT-AV1 日志。
-# 待确认：媒体时间戳及音轨同步；后续研究：结合 encode.log/progress.log 和主观画质决策参数。
+# 需求：Release AV1 帧数输入默认 0 压缩完整视频，正整数编码开头相应视频帧；回传单组成品与日志。
+# 待确认：媒体帧时间戳/音轨同步；后续研究：分析完整 encode.log、progress.log 以及主观画质。
 # 优化：共用预检、runner 与镜像获取；不安装 rclone，不用 Artifact 中转。
-# 风险：有损编码和运行配额；失败可能留下本次已上传附件，不覆盖或删除原附件。
-# 验证：分片/原文件 SHA-256、完整解码、上传附件大小/digest；静态测试不替代云端实跑。
-name: Release AV1 First 1200 Frames Compression
+# 风险：默认 0 将执行全片且耗费更多磁盘/Actions 时长；失败可能留下部分附件，不覆盖原片。
+# 验证：0 全片与 N>0 截帧传参、全片磁盘/时长约束、成品完整解码及私有 Release 回传。
+name: Release AV1 Compression with Detailed Logs
 
 # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
 on:
@@ -14,16 +14,20 @@ on:
         required: true
         default: ""
         type: string
+      max_frames:
+        description: "Video frames: 0 = full duration; N > 0 = first N frames"
+        default: 0
+        type: number
       crf:
-        description: "First 1200-frame CRF (1-40)"
+        description: "AV1 CRF (1-40)"
         default: "30"
         type: string
       preset:
-        description: "First 1200-frame encoder preset (4-9)"
+        description: "SVT-AV1 preset (4-9)"
         default: "6"
         type: string
 
-run-name: Release AV1 first1200 - CRF ${{ inputs.crf || '30' }} - preset ${{ inputs.preset || '6' }}
+run-name: Release AV1 frames=${{ inputs.max_frames }} CRF=${{ inputs.crf }} preset=${{ inputs.preset }}
 permissions: write-all
 
 concurrency:
@@ -50,7 +54,7 @@ jobs:
     name: ${{ needs.runner-image.outputs.RUNNER_IMAGE }} - Release AV1
     needs: runner-image
     runs-on: ${{ needs.runner-image.outputs.RUNNER_IMAGE }}
-    timeout-minutes: 180
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@main
         with:
@@ -76,13 +80,15 @@ jobs:
           printf 'FF_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
 
       - name: Process video and return verified results to source Release
-        timeout-minutes: 170
+        timeout-minutes: 330
         env:
           GH_TOKEN: ${{ secrets.READONLY }}
           GH_RELEASE_WRITE_TOKEN: ${{ secrets.WRITEONLY }}
           RELEASE_URL: ${{ inputs.release_url }}
           CRF: ${{ inputs.crf }}
           PRESET: ${{ inputs.preset }}
+          MAX_FRAMES: ${{ inputs.max_frames }}
         run: |
           python3 scripts/release_av1.py \
-            --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET" --max-frames 1200
+            --release-url "$RELEASE_URL" --crf "$CRF" --preset "$PRESET" \
+            --max-frames "$MAX_FRAMES"

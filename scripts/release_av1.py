@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# 需求：原片前 1200 帧的单组 AV1 压缩；回传私有 Release MP4、完整编码日志、进度及诊断报告。
-# 待确认：真实媒体时基/AAC 时间戳、令牌权限；CRF 为单组参数而非画质最佳结论。
+# 需求：Release 默认全片（max_frames=0），正整数截取前 N 帧；仅单组 AV1 编码并回传 MP4/日志。
+# 待确认：真实媒体的帧时基/AAC 时间戳、令牌权限；不将单次 CRF 当成最优画质结论。
 # 后续研究：根据 encode.log、progress.log 分析编码速度、资源开销、码率、警告并选择后续参数。
 # 风险：上传失败可留下本次部分附件；唯一运行前缀、不覆盖、不删原附件，不公开私有日志。
-# 验证：分片还原、只压缩前 1200 帧、日志完整、成品可解码且输出帧数精确，不覆盖原附件。
+# 验证：0 不向编码器传 --max-frames，正整数精确限帧；完整视频空间门槛、输出校验与日志。
 """Download one video, encode AV1, and append verified results to its Release."""
 
 import argparse
@@ -23,6 +23,18 @@ from onedrive_batch import EXTENSIONS, clean_env
 CHUNK = 8 * 1024**2
 ASSET_LIMIT = 1_900_000_000
 RESULT_PREFIX = 'av1-result-'
+
+
+def frame_options(max_frames):
+    """Return no frame cap for 0, otherwise an explicit positive frame cap."""
+    if max_frames < 0:
+        raise ValueError('max_frames must be nonnegative')
+    return [] if max_frames == 0 else ['--max-frames', str(max_frames)]
+
+
+def disk_requirement(source_size, max_frames):
+    """Full encodes preserve the original conservative disk requirement."""
+    return source_size * 4 + ASSET_LIMIT if max_frames == 0 else source_size + 2_000_000_000
 
 
 def release_target(url):
@@ -181,15 +193,17 @@ def main():
     parser.add_argument('--release-url', required=True)
     parser.add_argument('--crf', type=int, choices=range(1, 41), default=30)
     parser.add_argument('--preset', type=int, choices=range(4, 10), default=6)
-    parser.add_argument('--max-frames', type=int, default=1200)
+    parser.add_argument('--max-frames', type=int, default=0,
+                        help='0 encodes complete source, N > 0 encodes the first N frames')
     args = parser.parse_args()
-    if args.max_frames <= 0:
-        parser.error('--max-frames must be positive')
+    if args.max_frames < 0:
+        parser.error('--max-frames must be nonnegative')
     repo, tag = release_target(args.release_url)
     run, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
     if not run.isdecimal() or not attempt.isdecimal():
         raise ValueError('Invalid workflow run identity')
-    prefix = f'{RESULT_PREFIX}first{args.max_frames}-crf{args.crf}-p{args.preset}-{run}-{attempt}'
+    scope = 'full' if args.max_frames == 0 else f'first{args.max_frames}'
+    prefix = f'{RESULT_PREFIX}{scope}-crf{args.crf}-p{args.preset}-{run}-{attempt}'
     release = api(f'repos/{repo}/releases/tags/{quote(tag, safe="")}')
     if release.get('immutable') or release.get('draft'):
         raise ValueError('Use a published, mutable Release')
@@ -205,8 +219,8 @@ def main():
     selected, split = source_assets(assets)
     expected_original = original_digest(repo, assets) if split else digest(selected[0])
     size = sum(a['size'] for a in selected)
-    if shutil.disk_usage('.').free < size + 2_000_000_000:
-        raise ValueError('Insufficient space: source size plus 2 GB reserve required')
+    if shutil.disk_usage('.').free < disk_requirement(size, args.max_frames):
+        raise ValueError('Insufficient free disk space for selected video length')
     output = Path('output')
     output.mkdir(exist_ok=False)
     combined = hashlib.sha256()
@@ -222,7 +236,7 @@ def main():
             subprocess.run([sys.executable, 'scripts/compress_av1.py', str(source),
                             '--output-dir', str(output / 'encoded'), '--crf', str(args.crf),
                             '--preset', str(args.preset), '--threads', '4',
-                            '--max-frames', str(args.max_frames)],
+                            *frame_options(args.max_frames)],
                            env=encoder_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            check=True, timeout=18000)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -246,8 +260,8 @@ def main():
                                    'assets': expected}, indent=2) + '\n')
     marker = publish(repo, tag, manifest)
     verify_uploaded(repo, release['id'], [marker])
-    summary = (f'AV1 prefix complete: first {args.max_frames} frames, CRF {args.crf}, '
-               f'preset {args.preset}, output {report["output_bytes"]} bytes, '
+    summary = (f'AV1 {scope} complete: CRF {args.crf}, preset {args.preset}, '
+               f'output {report["output_bytes"]} bytes, '
                f'encoding {report["encode_seconds"]:.1f} seconds. '
                'MP4 and detailed logs were appended to the private Release.\n')
     print(summary)

@@ -1,5 +1,5 @@
-# 待确认：真实 GitHub 权限/网络及长视频；本地合成媒体不能替代云端实跑。
-# 后续研究/优化：断点下载；风险/验证：损坏分片、凭据隔离、失败禁传成品、超限回传和结果校验。
+# 待确认：完整私有视频的实际编码时长与磁盘空间；本地单测不能替代 GitHub Actions 全片验证。
+# 后续研究：下载续传和真实视频日志分析；风险/验证：0 全片、正整数限帧、负数拒绝、存储要求、私有上传。
 import contextlib
 import hashlib
 import io
@@ -22,6 +22,15 @@ def asset(name, content=b'video', identity=1):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_frame_scope_and_disk_space(self):
+        self.assertEqual(release.frame_options(0), [])
+        self.assertEqual(release.frame_options(1200), ['--max-frames', '1200'])
+        self.assertEqual(release.frame_options(1), ['--max-frames', '1'])
+        with self.assertRaises(ValueError):
+            release.frame_options(-1)
+        self.assertEqual(release.disk_requirement(1000, 0), 4000 + release.ASSET_LIMIT)
+        self.assertEqual(release.disk_requirement(1000, 1200), 2_000_001_000)
+
     def test_target_and_unsafe_hosts(self):
         self.assertEqual(release.release_target('https://github.com/o/r/releases/tag/v%2F1'), ('o/r', 'v/1'))
         for url in ('https://github.com.evil/o/r/releases/tag/v1',
